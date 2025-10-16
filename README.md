@@ -182,10 +182,6 @@ This tool is designed for defensive security analysis. Contributions should focu
 - Enhanced export capabilities
 - Bug fixes and performance improvements
 
-## License
-
-[Add your license information here]
-
 ## Disclaimer
 
 This tool is intended for research, educational, and defensive security purposes. Results should be validated through multiple methods for critical applications. The accuracy depends on the underlying VLM model and training data.
