@@ -321,9 +321,13 @@ class ArtifactGenerator:
         Generate FFT with preprocessing for improved pattern detection.
 
         Preprocessing steps:
-        1. Resize to standardized size (default: 512x512)
-        2. Apply high-pass filter to remove DC bias
-        3. Compute FFT with enhanced pattern visibility
+        1. Center crop to largest square (preserves aspect ratio)
+        2. Resize square to standardized size (default: 512x512)
+        3. Apply high-pass filter to remove DC bias
+        4. Compute FFT with enhanced pattern visibility
+
+        IMPORTANT: Uses center crop instead of naive resize to prevent
+        distortion of grid patterns (e.g., panoramas won't turn squares into rectangles).
 
         Args:
             image_input: Input image as file path, PIL Image, or numpy array
@@ -365,8 +369,22 @@ class ArtifactGenerator:
                 "image_input must be str (path), PIL.Image, or numpy.ndarray"
             )
 
-        # Step 1: Resize to standardized size
-        gray = cv2.resize(gray, (target_size, target_size), interpolation=cv2.INTER_LINEAR)
+        # Step 1: Center crop to square, then resize to standardized size
+        # This preserves aspect ratio and prevents distortion of grid patterns
+        h, w = gray.shape
+
+        # Find the largest center square
+        min_dim = min(h, w)
+
+        # Calculate crop coordinates (center crop)
+        start_y = (h - min_dim) // 2
+        start_x = (w - min_dim) // 2
+
+        # Crop to square
+        gray_square = gray[start_y:start_y + min_dim, start_x:start_x + min_dim]
+
+        # Now resize the square to target_size (no distortion)
+        gray = cv2.resize(gray_square, (target_size, target_size), interpolation=cv2.INTER_LINEAR)
 
         # Step 2: Apply high-pass filter (optional)
         if apply_highpass:
