@@ -18,7 +18,8 @@
 7. [Data Flow](#data-flow)
 8. [API Specifications](#api-specifications)
 9. [UI/UX Specifications](#uiux-specifications)
-10. [Testing & Validation](#testing--validation)
+10. [Security & Best Practices](#security--best-practices)
+11. [Testing & Validation](#testing--validation)
 
 ---
 
@@ -920,6 +921,174 @@ Confidence: 87.3% [████████████████████�
 ### Tab 3: Configuration (New)
 
 See [Feature 2 UI Specification](#ui-specification-tab-3---model-configuration)
+
+---
+
+## Security & Best Practices
+
+### Docker Security
+
+**Non-Root User Execution (CRITICAL)**
+
+Containers should never run as root to limit security impact of potential compromises.
+
+```dockerfile
+# Create non-root user
+RUN useradd -m -s /bin/bash --uid 1001 appuser
+
+# Set ownership of files
+COPY --chown=appuser:appuser app.py .
+RUN chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
+```
+
+**Benefits:**
+- Limits blast radius if container is compromised
+- Prevents privilege escalation attacks
+- Follows principle of least privilege
+- Required for many enterprise security policies
+
+### Code Quality
+
+**Temperature Settings**
+
+- **Forensic Analysis:** Use `temperature=0.0` for deterministic, reproducible results
+- **Chat Interactions:** Use `temperature=0.7` to allow natural conversation
+- **Rationale:** Forensic analysis requires consistency across runs; chat benefits from variability
+
+```python
+# Forensic classification
+response = client.chat.completions.create(
+    model=model_name,
+    messages=[...],
+    temperature=0.0  # Deterministic for forensic analysis
+)
+
+# Chat interaction
+response = client.chat.completions.create(
+    model=model_name,
+    messages=[...],
+    temperature=0.7  # Allow creativity for chat
+)
+```
+
+**Import Style (PEP 8 Compliance)**
+
+Follow PEP 8 style guide for clean, readable code:
+
+```python
+# Bad
+import io, tempfile, cv2, pandas as pd
+
+# Good
+import io
+import tempfile
+import cv2
+import pandas as pd
+```
+
+**Resource Cleanup**
+
+Always clean up temporary resources using try/finally blocks:
+
+```python
+# Temporary file handling
+tmp_path = None
+try:
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+        tmp.write(data)
+        tmp_path = tmp.name
+    # Process file
+    process_video(tmp_path)
+finally:
+    # Ensure cleanup even if errors occur
+    if tmp_path and os.path.exists(tmp_path):
+        try:
+            os.unlink(tmp_path)
+        except Exception:
+            pass  # Ignore cleanup errors
+```
+
+### Performance Optimization
+
+**DataFrame Lookups**
+
+Convert DataFrame columns to sets for O(1) lookup instead of O(N):
+
+```python
+# Bad: O(N) lookup inside loop
+for img_file in eval_images:
+    filename = img_file.name
+    if filename not in gt_df["filename"].values:  # O(N) lookup
+        continue
+
+# Good: O(1) lookup with set
+gt_filenames = set(gt_df["filename"].values)  # One-time conversion
+for img_file in eval_images:
+    filename = img_file.name
+    if filename not in gt_filenames:  # O(1) lookup
+        continue
+```
+
+**Impact:** For dataset with N images, reduces complexity from O(N²) to O(N).
+
+### Configuration Management
+
+**Environment Variables vs Hardcoding**
+
+The `model_manager.py` module supersedes hardcoded configurations by providing:
+- Dynamic model addition/removal via UI
+- Persistent JSON-based configuration
+- No code changes required for new models
+- Support for environment-specific endpoints
+
+**Rationale:** While environment variables are useful for deployment-time configuration, the ModelManager provides runtime flexibility without redeployment.
+
+### Documentation Standards
+
+**Docker Compose v2 Syntax**
+
+Use modern `docker compose` (v2) syntax instead of legacy `docker-compose` (v1):
+
+```bash
+# Modern syntax (v2)
+docker compose up --build
+docker compose logs -f
+docker compose down
+
+# Legacy syntax (v1) - avoid
+docker-compose up --build
+```
+
+**Benefits:**
+- v2 is integrated into Docker CLI (no separate installation)
+- Improved performance and features
+- Better compatibility with modern Docker versions
+
+### Repository Hygiene
+
+**Remove Obsolete Files**
+
+- Keep only actively used scripts (e.g., `generate_report_updated.py`)
+- Remove deprecated versions (e.g., `generate_report.py`)
+- Reduces confusion and maintenance burden
+- Keeps repository clean and navigable
+
+**Package Management**
+
+- Remove duplicate dependencies in Dockerfile
+- Use `--no-install-recommends` for minimal image size
+- Clean apt cache after installation
+
+```dockerfile
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libglib2.0-0 \
+    # No duplicate entries
+    && apt-get clean \
+    && rm -rf /var/lib/apt/lists/*
+```
 
 ---
 

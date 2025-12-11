@@ -1,7 +1,11 @@
 import streamlit as st
 from PIL import Image
 from collections import Counter
-import io, tempfile, cv2, pandas as pd
+import io
+import tempfile
+import cv2
+import pandas as pd
+import os
 from datetime import datetime
 
 from shared_functions import (
@@ -71,24 +75,34 @@ with tab1:
                     {"role": "user", "content": f"📷 Uploaded image: {uploaded_file.name}"}
                 )
             else:
-                with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
-                    tmp.write(media_bytes)
-                    tmp_path = tmp.name
-                cap = cv2.VideoCapture(tmp_path)
-                success, frame = cap.read()
-                cap.release()
-                if success:
-                    frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-                    analysis_image = Image.fromarray(frame_rgb)
-                    st.session_state.media = analysis_image
-                    st.session_state.messages.append(
-                        {
-                            "role": "user",
-                            "content": f"🎞️ Uploaded video: {uploaded_file.name}",
-                        }
-                    )
-                else:
-                    st.error("Could not extract frames from video.")
+                # Video processing with proper cleanup
+                tmp_path = None
+                try:
+                    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp4") as tmp:
+                        tmp.write(media_bytes)
+                        tmp_path = tmp.name
+                    cap = cv2.VideoCapture(tmp_path)
+                    success, frame = cap.read()
+                    cap.release()
+                    if success:
+                        frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                        analysis_image = Image.fromarray(frame_rgb)
+                        st.session_state.media = analysis_image
+                        st.session_state.messages.append(
+                            {
+                                "role": "user",
+                                "content": f"🎞️ Uploaded video: {uploaded_file.name}",
+                            }
+                        )
+                    else:
+                        st.error("Could not extract frames from video.")
+                finally:
+                    # Cleanup temporary file
+                    if tmp_path and os.path.exists(tmp_path):
+                        try:
+                            os.unlink(tmp_path)
+                        except Exception:
+                            pass  # Ignore cleanup errors
 
     # media panel
     with left_col:
@@ -170,6 +184,9 @@ with tab2:
         try:
             gt_df = load_ground_truth(gt_file)
 
+            # Optimize ground truth lookup by converting to set (O(1) instead of O(N))
+            gt_filenames = set(gt_df["filename"].values)
+
             per_model_results = {}  # model_key -> list[per image dicts]
             per_model_metrics = []  # list of metrics dicts with model info
 
@@ -186,7 +203,7 @@ with tab2:
                     img = Image.open(img_file)
                     filename = img_file.name
 
-                    if filename not in gt_df["filename"].values:
+                    if filename not in gt_filenames:
                         st.warning(f"No ground truth for {filename}, skipping")
                         continue
 

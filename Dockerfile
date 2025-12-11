@@ -17,7 +17,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libxext6 \
     libxrender1 \
     libgomp1 \
-    libglib2.0-0 \
     libgl1 \
     libgthread-2.0-0 \
     && apt-get clean \
@@ -29,15 +28,21 @@ COPY requirements.txt .
 # Install Python dependencies
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application files
-COPY app.py .
-COPY config.py .
-COPY shared_functions.py .
-COPY generate_report.py .
-COPY generate_report_updated.py .
+# Create non-root user for security
+RUN useradd -m -s /bin/bash --uid 1001 appuser
 
-# Create necessary directories
-RUN mkdir -p results testing_files misc analysis_output
+# Copy application files with correct ownership
+COPY --chown=appuser:appuser app.py .
+COPY --chown=appuser:appuser config.py .
+COPY --chown=appuser:appuser shared_functions.py .
+COPY --chown=appuser:appuser generate_report_updated.py .
+
+# Create necessary directories with correct ownership
+RUN mkdir -p results testing_files misc analysis_output && \
+    chown -R appuser:appuser /app
+
+# Switch to non-root user
+USER appuser
 
 # Expose Streamlit default port
 EXPOSE 8501

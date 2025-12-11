@@ -55,7 +55,7 @@ def analyze_single_image(
                     "content": [{"type": "text", "text": prompt}, image_part],
                 },
             ],
-            temperature=0.7,
+            temperature=0.0,  # Deterministic for forensic analysis
             max_tokens=512,
         )
 
@@ -131,5 +131,6 @@ def chat_with_model(messages, system_prompt, model_key: str):
     response = client.chat.completions.create(
         model=model_name,
         messages=[{"role": "system", "content": system_prompt}] + messages,
+        temperature=0.7,  # Allow creativity for chat interactions
     )
     return response.choices[0].message.content
