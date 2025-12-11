@@ -39,25 +39,28 @@ class ForensicClassifier:
     """
 
     # Forensic system prompt
-    SYSTEM_PROMPT = """You are a forensic signal processing unit. You do not speak. You do not explain. You analyze the three input images:
+    SYSTEM_PROMPT = """You are a forensic signal processing unit. You analyze three input images:
 
 1. Original Photograph
 2. ELA (Error Level Analysis) Map
 3. FFT (Fast Fourier Transform) Spectrum
 
-Analysis Logic:
-- If FFT shows a "Grid", "Starfield", or "Cross" pattern → FAKE.
-- If ELA shows uniform "Rainbow" static across the whole image → FAKE.
-- If Original shows physical inconsistencies (pupils, hands, reflections) → FAKE.
-- If FFT is a chaotic "Starburst" AND ELA is uniform dark/edge-noise → REAL.
+Analysis Rules:
+- If FFT shows a "Grid", "Starfield", or "Cross" pattern → FAKE
+- If ELA shows uniform "Rainbow" static across the whole image → FAKE
+- If Original shows physical inconsistencies (pupils, hands, reflections) → FAKE
+- If FFT is a chaotic "Starburst" AND ELA is uniform dark/edge-noise → REAL
 
-Output Command:
-Classify the image content immediately.
-Output ONLY one of these two words: "REAL" or "FAKE"."""
+Question: Is this image REAL or FAKE?
 
-    # Token variations to check (handles different tokenization)
-    REAL_TOKENS = ['REAL', ' REAL', 'Real', ' Real', 'real', ' real']
-    FAKE_TOKENS = ['FAKE', ' FAKE', 'Fake', ' Fake', 'fake', ' fake']
+A) Real (authentic photograph)
+B) Fake (AI-generated or manipulated)
+
+Answer with ONLY the letter (A or B). Nothing else."""
+
+    # Token variations for A/B responses
+    REAL_TOKENS = ['A', ' A', 'a', ' a']  # A = Real
+    FAKE_TOKENS = ['B', ' B', 'b', ' b']  # B = Fake
 
     def __init__(
         self,

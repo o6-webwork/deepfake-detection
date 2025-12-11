@@ -260,8 +260,8 @@ with tab1:
 
 {debug_tokens_str}
 
-*Looking for: REAL/Real/real or FAKE/Fake/fake variants*
-*If these tokens aren't in the list, the model isn't following the prompt correctly.*
+*Looking for: A (Real) or B (Fake)*
+*If these tokens aren't in the list, the model isn't following the MCQ prompt correctly.*
 """
                     st.session_state.messages.append(
                         {"role": "assistant", "content": debug_msg}
