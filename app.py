@@ -16,6 +16,8 @@ from shared_functions import (
     display_confusion_matrix,
 )
 from config import PROMPTS, SYSTEM_PROMPT, MODEL_CONFIGS
+from forensics import generate_both
+from classifier import create_classifier_from_config
 
 st.set_page_config(page_title="Deepfake Detector", layout="wide", page_icon="🕵️‍♂️")
 
@@ -26,6 +28,10 @@ if "media" not in st.session_state:
     st.session_state.media = None
 if "eval_results" not in st.session_state:
     st.session_state.eval_results = []
+if "forensic_artifacts" not in st.session_state:
+    st.session_state.forensic_artifacts = None  # Stores (ela_bytes, fft_bytes)
+if "forensic_result" not in st.session_state:
+    st.session_state.forensic_result = None  # Stores classification result
 
 # build model selection mapping
 model_key_to_display = {
@@ -108,7 +114,65 @@ with tab1:
     with left_col:
         st.markdown('<div id="media-panel">', unsafe_allow_html=True)
         if st.session_state.media is not None:
-            st.image(st.session_state.media, use_container_width=True)
+            st.image(st.session_state.media, use_container_width=True, caption="Original Image")
+
+            # Display forensic artifacts if available
+            if st.session_state.forensic_artifacts is not None:
+                with st.expander("🔬 View Forensic Artifacts", expanded=False):
+                    ela_bytes, fft_bytes = st.session_state.forensic_artifacts
+
+                    # Three-column layout for artifacts
+                    st.markdown("### Forensic Analysis Maps")
+
+                    col1, col2 = st.columns(2)
+
+                    with col1:
+                        st.markdown("**ELA (Error Level Analysis)**")
+                        st.image(
+                            Image.open(io.BytesIO(ela_bytes)),
+                            use_container_width=True,
+                            caption="Compression inconsistency map"
+                        )
+                        st.caption("🔍 **AI signature:** Uniform rainbow static\n\n✓ **Real signature:** Dark regions with edge noise")
+
+                    with col2:
+                        st.markdown("**FFT (Frequency Spectrum)**")
+                        st.image(
+                            Image.open(io.BytesIO(fft_bytes)),
+                            use_container_width=True,
+                            caption="Frequency domain analysis"
+                        )
+                        st.caption("🔍 **AI signature:** Grid/cross patterns\n\n✓ **Real signature:** Chaotic starburst")
+
+                    # Show detailed forensic result if available
+                    if st.session_state.forensic_result is not None:
+                        result = st.session_state.forensic_result
+                        st.markdown("---")
+                        st.markdown("### Forensic Indicators")
+
+                        confidence = result['confidence_score']
+                        is_ai = result['is_ai']
+
+                        # Visual confidence bar
+                        st.progress(
+                            confidence,
+                            text=f"AI Confidence: {confidence*100:.1f}%"
+                        )
+
+                        # Interpretation
+                        if is_ai:
+                            st.markdown("**🚨 Classification: AI-Generated**")
+                            if confidence > 0.8:
+                                st.warning("⚠️ High confidence - Strong forensic evidence of AI generation")
+                            else:
+                                st.info("ℹ️ Moderate confidence - Some forensic indicators present")
+                        else:
+                            st.markdown("**✅ Classification: Authentic**")
+                            if confidence < 0.2:
+                                st.success("✓ High confidence - Strong forensic evidence of authenticity")
+                            else:
+                                st.info("ℹ️ Moderate confidence - Weak AI indicators")
+
         else:
             st.info("Upload image/video to begin analysis.")
         st.markdown("</div>", unsafe_allow_html=True)
@@ -135,14 +199,68 @@ with tab1:
         analysis_image = st.session_state.get("media")
 
     if new_upload and analysis_image:
-        with st.spinner("🔍 Analyzing uploaded file..."):
-            result = analyze_single_image(
-                analysis_image, PROMPTS, SYSTEM_PROMPT, detect_model_key
-            )
-            assistant_msg = f"**Model:** {detect_model_display}\n\n**Analysis:**\n{result['analysis']}\n\n**Classification:** {result['classification']} (score={result['score']})"
-            st.session_state.messages.append(
-                {"role": "assistant", "content": assistant_msg}
-            )
+        with st.spinner("🔬 Generating forensic artifacts..."):
+            try:
+                # Generate ELA and FFT forensic maps
+                ela_bytes, fft_bytes = generate_both(analysis_image)
+                st.session_state.forensic_artifacts = (ela_bytes, fft_bytes)
+
+                # Create classifier
+                classifier = create_classifier_from_config(
+                    detect_model_key,
+                    threshold=0.5  # Default threshold, can be made configurable
+                )
+
+                # Classify using forensic artifacts
+                ela_image = Image.open(io.BytesIO(ela_bytes))
+                fft_image = Image.open(io.BytesIO(fft_bytes))
+
+                result = classifier.classify_pil_image(
+                    analysis_image,
+                    ela_image,
+                    fft_image
+                )
+                st.session_state.forensic_result = result
+
+                # Create assistant message
+                confidence_pct = result['confidence_score'] * 100
+                classification = result['classification']
+
+                assistant_msg = f"""**Model:** {detect_model_display}
+
+**🔬 Forensic Classification**
+
+**Result:** {classification}
+**Confidence:** {confidence_pct:.1f}%
+**Threshold:** {result['threshold']} (AI if score > threshold)
+
+**Raw Logprobs:**
+- P(FAKE): {result['raw_logits']['fake']:.3f} → {result['raw_probs']['fake']:.4f}
+- P(REAL): {result['raw_logits']['real']:.3f} → {result['raw_probs']['real']:.4f}
+
+**Token Output:** `{result['token_output']}`
+
+💡 *View forensic artifacts below the image panel*
+"""
+
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": assistant_msg}
+                )
+
+            except Exception as e:
+                error_msg = f"**Error during forensic analysis:** {str(e)}\n\nFalling back to standard analysis..."
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": error_msg}
+                )
+
+                # Fallback to old method
+                result = analyze_single_image(
+                    analysis_image, PROMPTS, SYSTEM_PROMPT, detect_model_key
+                )
+                assistant_msg = f"**Model:** {detect_model_display}\n\n**Analysis:**\n{result['analysis']}\n\n**Classification:** {result['classification']} (score={result['score']})"
+                st.session_state.messages.append(
+                    {"role": "assistant", "content": assistant_msg}
+                )
 
         st.rerun()
 
