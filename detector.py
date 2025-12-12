@@ -95,10 +95,23 @@ class OSINTDetector:
         """
         pipeline_start = time.time()
 
-        # Stage 0: Check metadata for auto-fail
-        stage0_start = time.time()
-        metadata_dict, metadata_report, auto_fail = self._check_metadata(image_bytes)
-        stage0_time = time.time() - stage0_start
+        # Wrap entire pipeline in try-except to ensure forensic report is always returned
+        try:
+            # Stage 0: Check metadata for auto-fail
+            stage0_start = time.time()
+            metadata_dict, metadata_report, auto_fail = self._check_metadata(image_bytes)
+            stage0_time = time.time() - stage0_start
+        except Exception as e:
+            # If even metadata extraction fails, return minimal error result
+            return {
+                "tier": "Suspicious",
+                "confidence": 0.5,
+                "reasoning": f"Pipeline initialization error: {type(e).__name__}: {str(e)}",
+                "forensic_report": "Error: Could not extract metadata",
+                "metadata_auto_fail": False,
+                "raw_logits": {"real": -0.69, "fake": -0.69},
+                "verdict_token": None
+            }
 
         if auto_fail:
             result = {
@@ -131,29 +144,53 @@ class OSINTDetector:
 
             return result
 
-        # Stage 1: Generate forensic artifacts
-        stage1_start = time.time()
-        ela_bytes = self.artifact_gen.generate_ela(image_bytes)
-        fft_bytes, fft_metrics = self.artifact_gen.generate_fft_preprocessed(image_bytes)
-        ela_variance = self.artifact_gen.compute_ela_variance(ela_bytes)
-        stage1_time = time.time() - stage1_start
+        # Stage 1: Generate forensic artifacts (with error handling)
+        try:
+            stage1_start = time.time()
+            ela_bytes = self.artifact_gen.generate_ela(image_bytes)
+            fft_bytes, fft_metrics = self.artifact_gen.generate_fft_preprocessed(image_bytes)
+            ela_variance = self.artifact_gen.compute_ela_variance(ela_bytes)
+            stage1_time = time.time() - stage1_start
 
-        # Build forensic report text
-        forensic_report = self._build_forensic_report(
-            metadata_report,
-            ela_variance,
-            fft_metrics
-        )
+            # Build forensic report text
+            forensic_report = self._build_forensic_report(
+                metadata_report,
+                ela_variance,
+                fft_metrics
+            )
+        except Exception as e:
+            # If forensic generation fails, return error with metadata at least
+            return {
+                "tier": "Suspicious",
+                "confidence": 0.5,
+                "reasoning": f"Forensic generation error: {type(e).__name__}: {str(e)}",
+                "forensic_report": f"{metadata_report}\n\nError: Could not generate ELA/FFT artifacts",
+                "metadata_auto_fail": False,
+                "raw_logits": {"real": -0.69, "fake": -0.69},
+                "verdict_token": None
+            }
 
-        # Stage 2 & 3: Two-stage API calls
-        system_prompt = self._get_system_prompt()
-        analysis, verdict_result, req1_time, req2_time, req1_tokens, req2_tokens = self._two_stage_classification(
-            image_bytes,
-            ela_bytes,
-            fft_bytes,
-            forensic_report,
-            system_prompt
-        )
+        # Stage 2 & 3: Two-stage API calls (with error handling)
+        try:
+            system_prompt = self._get_system_prompt()
+            analysis, verdict_result, req1_time, req2_time, req1_tokens, req2_tokens = self._two_stage_classification(
+                image_bytes,
+                ela_bytes,
+                fft_bytes,
+                forensic_report,
+                system_prompt
+            )
+        except Exception as e:
+            # If VLM calls fail, return forensic report with error message
+            return {
+                "tier": "Suspicious",
+                "confidence": 0.5,
+                "reasoning": f"VLM analysis error: {type(e).__name__}: {str(e)}",
+                "forensic_report": forensic_report,  # At least show forensics
+                "metadata_auto_fail": False,
+                "raw_logits": {"real": -0.69, "fake": -0.69},
+                "verdict_token": None
+            }
 
         # Stage 4: Determine tier based on confidence
         tier = self._classify_tier(verdict_result["confidence"])
@@ -339,7 +376,8 @@ OSINT Context: {self.context.capitalize()}
                 model=self.model_name,
                 messages=messages,
                 temperature=0.0,
-                max_tokens=300
+                max_tokens=500,  # Increased from 300 for longer analysis instructions
+                timeout=120.0  # 2 minute timeout to prevent hanging
             )
             req1_time = time.time() - req1_start
 
@@ -349,9 +387,10 @@ OSINT Context: {self.context.capitalize()}
             req1_tokens = len(forensic_report) // 4 + 765 * 3 + 50  # 3 images + text overhead
 
         except Exception as e:
-            # Fallback on API error
+            # Fallback on API error with descriptive message
+            error_detail = f"Stage 2 (VLM Analysis) failed: {type(e).__name__}: {str(e)}"
             return (
-                f"Error in Stage 2 analysis: {str(e)}",
+                error_detail,
                 {
                     "token": None,
                     "confidence": 0.5,
@@ -385,7 +424,8 @@ Answer with ONLY the single letter A or B."""
                 temperature=0.0,
                 max_tokens=1,
                 logprobs=True,
-                top_logprobs=5
+                top_logprobs=5,
+                timeout=60.0  # 1 minute timeout for verdict extraction
             )
             req2_time = time.time() - req2_start
 
@@ -400,7 +440,8 @@ Answer with ONLY the single letter A or B."""
                 "token": None,
                 "confidence": 0.5,
                 "raw_logits": {"real": -0.69, "fake": -0.69},
-                "error": str(e)
+                "error": f"Stage 3 (Verdict) failed: {type(e).__name__}: {str(e)}",
+                "top_k_logprobs": []
             }
             req2_tokens = 0
 
