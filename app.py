@@ -182,17 +182,17 @@ with tab1:
                         st.markdown("### OSINT Detection Result")
 
                         tier = result['tier']
-                        confidence = result['confidence']
+                        p_fake = result['confidence']  # detector.py always returns P(fake)
 
                         # Visual confidence bar with color coding
                         if tier == "Deepfake":
-                            st.error(f"🚨 **{tier}** - Confidence: {confidence*100:.1f}%")
+                            st.error(f"🚨 **{tier}** - P(Fake): {p_fake*100:.1f}%")
                         elif tier == "Suspicious":
-                            st.warning(f"⚠️ **{tier}** - Confidence: {confidence*100:.1f}%")
+                            st.warning(f"⚠️ **{tier}** - P(Fake): {p_fake*100:.1f}%")
                         else:
-                            st.success(f"✅ **{tier}** - Confidence: {confidence*100:.1f}%")
+                            st.success(f"✅ **{tier}** - P(Fake): {p_fake*100:.1f}%")
 
-                        st.progress(confidence, text=f"P(Fake): {confidence*100:.1f}%")
+                        st.progress(p_fake, text=f"P(Fake): {p_fake*100:.1f}%")
 
                         # Metadata auto-fail indicator
                         if result.get('metadata_auto_fail', False):
@@ -207,12 +207,36 @@ with tab1:
         st.markdown('<div id="chat-panel">', unsafe_allow_html=True)
         st.markdown('<div id="chat-messages">', unsafe_allow_html=True)
 
-        for msg in st.session_state.messages:
+        for i, msg in enumerate(st.session_state.messages):
             role_class = "user" if msg["role"] == "user" else "assistant"
-            st.markdown(
-                f"<div class='chat-message {role_class}'>{msg['content']}</div>",
-                unsafe_allow_html=True,
-            )
+
+            # Check if this is an OSINT detection result (collapsible)
+            if msg["role"] == "assistant" and msg.get("is_osint_result", False):
+                # Extract filename and classification for expander title
+                filename = msg.get("filename", "Unknown")
+                tier = msg.get("tier", "Unknown")
+                p_fake_pct = msg.get("p_fake_pct", 0)
+
+                # Determine emoji based on tier
+                if tier == "Deepfake":
+                    tier_emoji = "🚨"
+                elif tier == "Suspicious":
+                    tier_emoji = "⚠️"
+                else:
+                    tier_emoji = "✅"
+
+                # Create collapsible expander
+                with st.expander(
+                    f"{tier_emoji} **{filename}** - {tier} (P(Fake): {p_fake_pct:.1f}%)",
+                    expanded=(i == len(st.session_state.messages) - 1)  # Only expand latest result
+                ):
+                    st.markdown(msg['content'], unsafe_allow_html=True)
+            else:
+                # Regular message (not collapsible)
+                st.markdown(
+                    f"<div class='chat-message {role_class}'>{msg['content']}</div>",
+                    unsafe_allow_html=True,
+                )
 
         st.markdown("</div>", unsafe_allow_html=True)
 
@@ -257,7 +281,8 @@ with tab1:
 
                 # Create assistant message
                 tier = result['tier']
-                confidence_pct = result['confidence'] * 100
+                p_fake = result['confidence']  # detector.py always returns P(fake)
+                p_fake_pct = p_fake * 100
                 reasoning = result['reasoning']
 
                 # Determine color coding
@@ -272,7 +297,7 @@ with tab1:
 **OSINT Context:** {osint_context.capitalize()}
 
 **{tier_emoji} Classification: {tier}**
-**Confidence:** {confidence_pct:.1f}%
+**P(Fake):** {p_fake_pct:.1f}%
 
 **VLM Reasoning:**
 {reasoning}
@@ -341,14 +366,14 @@ with tab1:
                     assistant_msg += f"""
 
 **Softmax Normalized:**
-- P(Fake) = {result['confidence']:.4f} ({confidence_pct:.1f}%)
-- P(Real) = {(1 - result['confidence']):.4f} ({(1 - result['confidence'])*100:.1f}%)
+- P(Fake) = {p_fake:.4f} ({p_fake_pct:.1f}%)
+- P(Real) = {(1 - p_fake):.4f} ({(1 - p_fake)*100:.1f}%)
 
 **Three-Tier Classification:**
 - Tier: **{tier}**
 - Threshold Check:
-  * P_fake < 0.50? {'YES → Authentic' if result['confidence'] < 0.50 else 'NO'}
-  * P_fake ≥ 0.90? {'YES → Deepfake' if result['confidence'] >= 0.90 else 'NO'}
+  * P_fake < 0.50? {'YES → Authentic' if p_fake < 0.50 else 'NO'}
+  * P_fake ≥ 0.90? {'YES → Deepfake' if p_fake >= 0.90 else 'NO'}
 
 **Verdict Token:** `{result['verdict_token']}`
 
@@ -373,7 +398,14 @@ with tab1:
 **KV-Cache Hit:** {'✅ YES' if debug.get('kv_cache_hit', False) else '❌ NO'}
 """
 
-                st.session_state.messages.append({"role": "assistant", "content": assistant_msg})
+                st.session_state.messages.append({
+                    "role": "assistant",
+                    "content": assistant_msg,
+                    "is_osint_result": True,
+                    "filename": uploaded_file.name if uploaded_file else "Unknown",
+                    "tier": tier,
+                    "p_fake_pct": p_fake_pct
+                })
                 st.rerun()
 
             except Exception as e:
