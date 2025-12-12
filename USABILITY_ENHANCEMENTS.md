@@ -46,7 +46,7 @@ with st.expander(
 
 ---
 
-### 2. Consistent Confidence Display (Always P(Fake))
+### 2. Layman-Friendly Probability Display (AI Generated Probability)
 
 **Problem**: The confidence value displayed could refer to either P(real) or P(fake) inconsistently, causing confusion. For example:
 ```
@@ -55,7 +55,9 @@ Confidence: 0.5%
 ```
 This is misleading because users might interpret "0.5% confidence" as low certainty, when it actually means P(Fake)=0.5%.
 
-**Solution**: Standardize all confidence displays to explicitly show **P(Fake)** at all times.
+Additionally, technical jargon like "P(Fake)" is not intuitive for non-technical users.
+
+**Solution**: Standardize all probability displays to explicitly show **"AI Generated Probability"** (or **"AI Generated"** in compact displays) at all times.
 
 **Changes Applied**:
 
@@ -65,7 +67,7 @@ This is misleading because users might interpret "0.5% confidence" as low certai
    st.error(f"🚨 **{tier}** - Confidence: {confidence*100:.1f}%")
 
    # After
-   st.error(f"🚨 **{tier}** - P(Fake): {p_fake*100:.1f}%")
+   st.error(f"🚨 **{tier}** - AI Generated Probability: {p_fake*100:.1f}%")
    ```
 
 2. **Chat Panel (Main Result)**:
@@ -74,18 +76,36 @@ This is misleading because users might interpret "0.5% confidence" as low certai
    **Confidence:** {confidence_pct:.1f}%
 
    # After
-   **P(Fake):** {p_fake_pct:.1f}%
+   **AI Generated Probability:** {p_fake_pct:.1f}%
    ```
 
-3. **Debug Mode (Softmax Display)**:
+3. **Expander Title (Compact Display)**:
+   ```python
+   # Before
+   f"{tier_emoji} **{filename}** - {tier} (P(Fake): {p_fake_pct:.1f}%)"
+
+   # After
+   f"{tier_emoji} **{filename}** - {tier} (AI Generated: {p_fake_pct:.1f}%)"
+   ```
+
+4. **Progress Bar**:
+   ```python
+   # Before
+   st.progress(p_fake, text=f"P(Fake): {p_fake*100:.1f}%")
+
+   # After
+   st.progress(p_fake, text=f"AI Generated: {p_fake*100:.1f}%")
+   ```
+
+5. **Debug Mode (Softmax Display)**:
    ```python
    # Before
    - P(Fake) = {result['confidence']:.4f} ({confidence_pct:.1f}%)
    - P(Real) = {(1 - result['confidence']):.4f}
 
    # After
-   - P(Fake) = {p_fake:.4f} ({p_fake_pct:.1f}%)
-   - P(Real) = {(1 - p_fake):.4f} ({(1 - p_fake)*100:.1f}%)
+   - AI Generated: {p_fake:.4f} ({p_fake_pct:.1f}%)
+   - Authentic (Real): {(1 - p_fake):.4f} ({(1 - p_fake)*100:.1f}%)
    ```
 
 4. **Variable Naming**:
@@ -101,12 +121,13 @@ This is misleading because users might interpret "0.5% confidence" as low certai
 
 **Benefits**:
 - ✅ No ambiguity about what the percentage represents
+- ✅ Layman-friendly terminology (no technical jargon)
 - ✅ Consistent reference point across all UI sections
-- ✅ Clear interpretation: Higher % = More likely fake
+- ✅ Clear interpretation: Higher % = More likely AI-generated
 - ✅ Aligned with three-tier thresholds:
-  - P(Fake) < 50% → Authentic
-  - P(Fake) 50-90% → Suspicious
-  - P(Fake) ≥ 90% → Deepfake
+  - AI Generated < 50% → Authentic
+  - AI Generated 50-90% → Suspicious
+  - AI Generated ≥ 90% → Deepfake
 
 ---
 
@@ -116,22 +137,24 @@ This is misleading because users might interpret "0.5% confidence" as low certai
 ```
 📷 Uploaded image: image1.jpg
 Classification: Authentic — Confidence: 5.2%
+[Full detailed report...]
 
 📷 Uploaded image: image2.jpg
 Classification: Deepfake — Confidence: 95.8%
-[Results stacked without clear separation]
+[Full detailed report...]
+[Results stacked without clear separation - confusing for users]
 ```
 
 ### After Enhancement:
 ```
-✅ image1.jpg - Authentic (P(Fake): 5.2%)
+✅ image1.jpg - Authentic (AI Generated: 5.2%)
    [Collapsed - click to expand full report]
 
-🚨 image2.jpg - Deepfake (P(Fake): 95.8%)
+🚨 image2.jpg - Deepfake (AI Generated: 95.8%)
    [Expanded by default - shows full report]
 
    Model: Qwen3 VL 32B
-   P(Fake): 95.8%
+   AI Generated Probability: 95.8%
 
    VLM Reasoning:
    [Analysis details...]
@@ -143,30 +166,30 @@ Classification: Deepfake — Confidence: 95.8%
 
 ### Test Case 1: Single Image Upload
 - Upload one image
-- Verify expander title shows correct filename, tier, and P(Fake)
+- Verify expander title shows correct filename, tier, and "AI Generated: X.X%"
 - Verify expander is expanded by default
-- Verify all confidence displays show "P(Fake): X.X%"
+- Verify all probability displays show "AI Generated Probability: X.X%"
 
 ### Test Case 2: Multiple Sequential Uploads
 - Upload image A → verify result displays
 - Upload image B → verify:
   - Image A result collapses automatically
   - Image B result expands by default
-  - Both expander titles are visible
+  - Both expander titles are visible with "AI Generated: X.X%"
   - Clear visual separation between results
 
 ### Test Case 3: Edge Cases
-- Upload image with P(Fake) = 49.9% (should show Authentic)
-- Upload image with P(Fake) = 50.0% (should show Suspicious)
-- Upload image with P(Fake) = 90.0% (should show Deepfake)
+- Upload image with AI Generated = 49.9% (should show Authentic)
+- Upload image with AI Generated = 50.0% (should show Suspicious)
+- Upload image with AI Generated = 90.0% (should show Deepfake)
 - Verify tier emoji matches classification
 
 ### Test Case 4: Debug Mode
 - Enable debug mode
 - Upload image
-- Verify all debug sections show P(Fake) consistently
-- Verify softmax normalization shows both P(Fake) and P(Real)
-- Verify threshold checks reference P(Fake)
+- Verify main sections show "AI Generated Probability"
+- Verify debug sections use layman-friendly "AI Generated" and "Authentic (Real)"
+- Verify threshold checks reference "AI Generated < 50%" and "AI Generated ≥ 90%"
 
 ---
 

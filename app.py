@@ -186,13 +186,13 @@ with tab1:
 
                         # Visual confidence bar with color coding
                         if tier == "Deepfake":
-                            st.error(f"🚨 **{tier}** - P(Fake): {p_fake*100:.1f}%")
+                            st.error(f"🚨 **{tier}** - AI Generated Probability: {p_fake*100:.1f}%")
                         elif tier == "Suspicious":
-                            st.warning(f"⚠️ **{tier}** - P(Fake): {p_fake*100:.1f}%")
+                            st.warning(f"⚠️ **{tier}** - AI Generated Probability: {p_fake*100:.1f}%")
                         else:
-                            st.success(f"✅ **{tier}** - P(Fake): {p_fake*100:.1f}%")
+                            st.success(f"✅ **{tier}** - AI Generated Probability: {p_fake*100:.1f}%")
 
-                        st.progress(p_fake, text=f"P(Fake): {p_fake*100:.1f}%")
+                        st.progress(p_fake, text=f"AI Generated: {p_fake*100:.1f}%")
 
                         # Metadata auto-fail indicator
                         if result.get('metadata_auto_fail', False):
@@ -227,7 +227,7 @@ with tab1:
 
                 # Create collapsible expander
                 with st.expander(
-                    f"{tier_emoji} **{filename}** - {tier} (P(Fake): {p_fake_pct:.1f}%)",
+                    f"{tier_emoji} **{filename}** - {tier} (AI Generated: {p_fake_pct:.1f}%)",
                     expanded=(i == len(st.session_state.messages) - 1)  # Only expand latest result
                 ):
                     st.markdown(msg['content'], unsafe_allow_html=True)
@@ -297,7 +297,7 @@ with tab1:
 **OSINT Context:** {osint_context.capitalize()}
 
 **{tier_emoji} Classification: {tier}**
-**P(Fake):** {p_fake_pct:.1f}%
+**AI Generated Probability:** {p_fake_pct:.1f}%
 
 **VLM Reasoning:**
 {reasoning}
@@ -365,15 +365,15 @@ with tab1:
 
                     assistant_msg += f"""
 
-**Softmax Normalized:**
-- P(Fake) = {p_fake:.4f} ({p_fake_pct:.1f}%)
-- P(Real) = {(1 - p_fake):.4f} ({(1 - p_fake)*100:.1f}%)
+**Softmax Normalized Probabilities:**
+- AI Generated: {p_fake:.4f} ({p_fake_pct:.1f}%)
+- Authentic (Real): {(1 - p_fake):.4f} ({(1 - p_fake)*100:.1f}%)
 
-**Three-Tier Classification:**
+**Three-Tier Classification Logic:**
 - Tier: **{tier}**
 - Threshold Check:
-  * P_fake < 0.50? {'YES → Authentic' if p_fake < 0.50 else 'NO'}
-  * P_fake ≥ 0.90? {'YES → Deepfake' if p_fake >= 0.90 else 'NO'}
+  * AI Generated < 50%? {'YES → Authentic' if p_fake < 0.50 else 'NO'}
+  * AI Generated ≥ 90%? {'YES → Deepfake' if p_fake >= 0.90 else 'NO'}
 
 **Verdict Token:** `{result['verdict_token']}`
 
