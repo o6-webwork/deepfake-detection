@@ -385,8 +385,11 @@ Answer with ONLY the single letter A or B."""
 
         case_a = """
 CASE A: Military Context (Uniforms/Parades/Formations)
-- Filter: IGNORE repetitive grid artifacts in FFT (formations create patterns).
-- Focus: Look for clone stamp errors (duplicate faces, floating weapons).
+- Filter: IGNORE MACRO-scale repetitive patterns (e.g., lines of soldiers, rows of tanks).
+  * These are organic, imperfect alignments at LOW frequency
+- Focus: FLAG MICRO-scale perfect pixel-grid anomalies or symmetric star patterns in noise floor.
+  * These are pixel-perfect, HIGH frequency GAN artifacts (often visible in sky/background)
+- Also check: Clone stamp errors (duplicate faces, floating weapons).
 - Threshold: FFT peak threshold increased by +20%."""
 
         case_b = """

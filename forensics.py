@@ -296,8 +296,21 @@ class ArtifactGenerator:
         """
         Compute variance score from ELA map.
 
-        Low variance (<2.0) indicates uniform compression (AI indicator).
-        High variance (≥2.0) indicates inconsistent compression (manipulation indicator).
+        CRITICAL UPDATE (Dec 12, 2025 - Forensic Expert Review):
+        Low variance is INCONCLUSIVE on social media imagery due to aggressive
+        platform re-compression (WhatsApp, Facebook, Twitter).
+
+        ELA Variance Interpretation:
+        - Low variance (<2.0): INCONCLUSIVE on social media
+          * Platforms like WhatsApp/Facebook crush quantization tables
+          * Real photos from WhatsApp will have variance ~0.5
+          * DO NOT auto-flag as AI based on this alone
+        - High variance (≥2.0): Potential manipulation/splicing
+          * Indicates inconsistent compression across regions
+          * Look for LOCAL inconsistencies (bright patch on dark background)
+
+        VLM Guidance: Focus on SPATIAL PATTERNS (local inconsistencies), not
+        global uniformity. A uniformly low ELA does not prove AI generation.
 
         Args:
             ela_bytes: PNG-encoded ELA map bytes from generate_ela()
@@ -309,7 +322,8 @@ class ArtifactGenerator:
             >>> ela_bytes = ArtifactGenerator.generate_ela('photo.jpg')
             >>> variance = ArtifactGenerator.compute_ela_variance(ela_bytes)
             >>> if variance < 2.0:
-            ...     print("Uniform compression (AI indicator)")
+            ...     print("Low variance - INCONCLUSIVE on social media")
+            >>> # VLM should look for LOCAL patterns instead
         """
         # Decode ELA image from PNG bytes
         nparr = np.frombuffer(ela_bytes, np.uint8)
@@ -333,32 +347,42 @@ class ArtifactGenerator:
         """
         Generate FFT with preprocessing for improved pattern detection.
 
-        Preprocessing steps:
-        1. Center crop to largest square (preserves aspect ratio)
-        2. Resize square to standardized size (default: 512x512)
-        3. Apply high-pass filter to remove DC bias
-        4. Compute FFT with enhanced pattern visibility
+        CRITICAL FIXES (Dec 12, 2025 - Forensic Expert Review):
+        1. NEVER resize - use center crop + padding to preserve pixel-level artifacts
+        2. Mask DC component + central axes to remove social media "JPEG Cross"
 
-        IMPORTANT: Uses center crop instead of naive resize to prevent
-        distortion of grid patterns (e.g., panoramas won't turn squares into rectangles).
+        Preprocessing steps:
+        1. Center crop (if ≥512×512) or pad (if <512×512) - NO RESIZING
+        2. Apply high-pass filter to remove DC bias from natural lighting
+        3. Compute FFT magnitude spectrum
+        4. Mask DC component (5px radius) + central axes (±1px) BEFORE normalization
+        5. Normalize and classify pattern
+
+        IMPORTANT: Linear interpolation acts as a low-pass filter, destroying
+        high-frequency AI artifacts (checkerboard patterns from Transpose Convolutions).
+        We use center crop + reflection padding instead.
+
+        Social Media Fix: Twitter/Telegram images with rectangular borders create
+        massive white crosses in FFT (100× stronger than AI artifacts). We mask
+        the central axes to prevent VLM fixation on this artifact.
 
         Args:
-            image_input: Input image as file path, PIL Image, or numpy array
-            target_size: Resize to this dimension (default: 512)
+            image_input: Input image as file path, bytes, PIL Image, or numpy array
+            target_size: Target dimension for crop/pad (default: 512)
             apply_highpass: Whether to apply high-pass filter (default: True)
 
         Returns:
             Tuple of (fft_bytes, metrics_dict):
                 - fft_bytes: PNG-encoded FFT spectrum
                 - metrics_dict: {
-                    'pattern_type': str,  # 'Grid', 'Cross', 'Starfield', 'Chaotic'
+                    'pattern_type': str,  # 'Grid', 'Starfield', 'Chaotic'
                     'peaks_detected': int,
                     'peak_threshold': float
                   }
 
         Example:
             >>> fft_bytes, metrics = ArtifactGenerator.generate_fft_preprocessed('photo.jpg')
-            >>> print(f"Pattern: {metrics['pattern_type']}")
+            >>> print(f"Pattern: {metrics['pattern_type']}")  # Grid/Starfield/Chaotic
         """
         # Load and convert to grayscale (same as original generate_fft)
         if isinstance(image_input, str):
@@ -389,22 +413,24 @@ class ArtifactGenerator:
                 "image_input must be str (path), bytes, PIL.Image, or numpy.ndarray"
             )
 
-        # Step 1: Center crop to square, then resize to standardized size
-        # This preserves aspect ratio and prevents distortion of grid patterns
+        # Step 1: Center crop + padding (CRITICAL FIX - Dec 12, 2025)
+        # NEVER resize - interpolation acts as low-pass filter and destroys
+        # pixel-level AI artifacts (checkerboard patterns from Transpose Convolutions)
         h, w = gray.shape
+        crop_size = target_size
 
-        # Find the largest center square
-        min_dim = min(h, w)
-
-        # Calculate crop coordinates (center crop)
-        start_y = (h - min_dim) // 2
-        start_x = (w - min_dim) // 2
-
-        # Crop to square
-        gray_square = gray[start_y:start_y + min_dim, start_x:start_x + min_dim]
-
-        # Now resize the square to target_size (no distortion)
-        gray = cv2.resize(gray_square, (target_size, target_size), interpolation=cv2.INTER_LINEAR)
+        if h >= crop_size and w >= crop_size:
+            # Image is large enough - center crop
+            start_y = (h - crop_size) // 2
+            start_x = (w - crop_size) // 2
+            gray = gray[start_y:start_y + crop_size, start_x:start_x + crop_size]
+        else:
+            # Image is too small - pad with reflection to avoid introducing artifacts
+            pad_y = max(0, crop_size - h)
+            pad_x = max(0, crop_size - w)
+            gray = cv2.copyMakeBorder(
+                gray, 0, pad_y, 0, pad_x, cv2.BORDER_REFLECT
+            )
 
         # Step 2: Apply high-pass filter (optional)
         if apply_highpass:
@@ -428,6 +454,21 @@ class ArtifactGenerator:
         # Apply log transform
         magnitude_log = 20 * np.log(magnitude + 1)
 
+        # CRITICAL FIX (Dec 12, 2025): Mask DC + Axes BEFORE normalization
+        # This removes social media "JPEG Cross" artifact from rectangular borders
+        # which creates high-energy white cross 100x stronger than AI artifacts
+        rows, cols = magnitude_log.shape
+        crow, ccol = rows // 2, cols // 2
+
+        # Mask DC component (center dot) - removes DC bias
+        cv2.circle(magnitude_log, (ccol, crow), 5, 0, -1)
+
+        # Mask central axes (the cross) - removes social media border artifacts
+        # Horizontal axis (±1 pixel)
+        magnitude_log[crow-1:crow+2, :] = 0
+        # Vertical axis (±1 pixel)
+        magnitude_log[:, ccol-1:ccol+2] = 0
+
         # Normalize to 0-255
         magnitude_normalized = cv2.normalize(
             magnitude_log, None, 0, 255, cv2.NORM_MINMAX
@@ -435,7 +476,7 @@ class ArtifactGenerator:
         fft_image = np.uint8(magnitude_normalized)
 
         # Analyze patterns (simple peak detection)
-        # Mask center DC component (very bright spot in middle)
+        # Use slightly larger mask for peak detection to avoid edge effects
         center = target_size // 2
         mask_radius = 10
         masked = fft_image.copy()
@@ -446,14 +487,13 @@ class ArtifactGenerator:
         peaks = np.sum(masked > peak_threshold)
 
         # Simple pattern classification based on peak distribution
+        # NOTE: "Cross" pattern removed - now masked as social media artifact
         if peaks > 100:
-            pattern_type = "Grid"  # Many peaks = grid pattern
+            pattern_type = "Grid"  # Many peaks = grid pattern (GAN artifact)
         elif peaks > 50:
-            pattern_type = "Starfield"  # Medium peaks = starfield
-        elif peaks > 20:
-            pattern_type = "Cross"  # Few peaks = cross pattern
+            pattern_type = "Starfield"  # Medium peaks = starfield (diffusion artifact)
         else:
-            pattern_type = "Chaotic"  # Very few peaks = natural chaos
+            pattern_type = "Chaotic"  # Few peaks = natural chaos (authentic photo)
 
         # Encode as PNG
         success, png_bytes = cv2.imencode('.png', fft_image)

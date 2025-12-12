@@ -782,6 +782,104 @@ print(f"Forensic Report:\n{result['forensic_report']}")
 
 **Solution:** Generate and provide **Error Level Analysis (ELA)**, **Fast Fourier Transform (FFT)**, and **EXIF metadata extraction** to the VLM, transforming it from a "visual guesser" to a "forensic signal interpreter."
 
+### ⚠️ Critical Forensic Pipeline Fixes (December 12, 2025)
+
+Based on forensic expert review, the following critical failures were identified and remediated:
+
+#### Fix 1: FFT Destructive Resizing → Center Crop + Padding
+
+**Problem**: Using `cv2.resize()` with `INTER_LINEAR` acts as a low-pass filter, mathematically smoothing out pixel-level AI generation artifacts (checkerboard patterns from Transpose Convolutions).
+
+**Root Cause**: Linear interpolation destroys high-frequency evidence we're trying to detect.
+
+**Solution**:
+- **NEVER resize** - Use center crop instead
+- **If image > 512×512**: Extract center 512×512 square
+- **If image < 512×512**: Pad with `cv2.BORDER_REFLECT` to 512×512
+
+```python
+# BEFORE (WRONG - Destroys Evidence)
+gray = cv2.resize(gray, (512, 512), interpolation=cv2.INTER_LINEAR)
+
+# AFTER (CORRECT - Preserves Evidence)
+h, w = gray.shape
+crop_size = 512
+
+# Center crop for large images
+if h >= crop_size and w >= crop_size:
+    start_y = (h - crop_size) // 2
+    start_x = (w - crop_size) // 2
+    gray = gray[start_y:start_y+crop_size, start_x:start_x+crop_size]
+else:
+    # Pad small images with reflection
+    pad_y = max(0, crop_size - h)
+    pad_x = max(0, crop_size - w)
+    gray = cv2.copyMakeBorder(gray, 0, pad_y, 0, pad_x, cv2.BORDER_REFLECT)
+```
+
+#### Fix 2: Unmasked Social Media Artifacts → DC + Axis Masking
+
+**Problem**: Social media images (Twitter/Telegram) have sharp rectangular borders that create massive high-energy white crosses (+) in the FFT spectrum, 100× stronger than any AI artifact. VLM fixates on the cross instead of actual anomalies.
+
+**Root Cause**: Unmasked central DC component and axes create "JPEG Cross" artifact.
+
+**Solution**: Mechanically mask (zero out):
+1. **DC Component**: Central dot (5-pixel radius circle)
+2. **Central Axes**: Horizontal and vertical lines through center (1-2 pixels wide)
+
+```python
+# Apply after log transform, before normalization
+rows, cols = magnitude_log.shape
+crow, ccol = rows // 2, cols // 2
+
+# Mask DC component (center dot)
+cv2.circle(magnitude_log, (ccol, crow), 5, 0, -1)
+
+# Mask axes (the cross)
+magnitude_log[crow-1:crow+2, :] = 0  # Horizontal axis
+magnitude_log[:, ccol-1:ccol+2] = 0  # Vertical axis
+```
+
+#### Fix 3: ELA Variance Misinterpretation → Context-Aware Thresholds
+
+**Problem**: Documentation claims "Low variance (<2.0) = AI indicator" but platforms like WhatsApp/Facebook aggressively re-compress all images, causing real photos to have variance ~0.5.
+
+**Root Cause**: Single global threshold fails on social media imagery.
+
+**Solution**:
+- **Update docstrings**: Clarify that low variance is **inconclusive** on social media
+- **VLM guidance**: Look for **local inconsistencies** (e.g., bright patch on dark background), not global uniformity
+- **Context-aware**: Social media images should not auto-fail on low ELA variance alone
+
+```python
+# Updated docstring
+"""
+ELA Variance Interpretation:
+- Low variance (<2.0): INCONCLUSIVE on social media (re-compression artifacts)
+- High variance (≥2.0): Potential manipulation
+- VLM should focus on LOCAL inconsistencies, not global uniformity
+"""
+```
+
+#### Fix 4: Ambiguous Grid Instructions → Macro vs Micro Distinction
+
+**Problem**: Military context prompt says "IGNORE repetitive grid artifacts" which is too broad - teaches model to ignore GAN artifacts (which also look like grids).
+
+**Root Cause**: No distinction between macro-scale formations and micro-scale pixel grids.
+
+**Solution**: Explicitly differentiate:
+- **Macro-Repetition** (Safe): Organic, imperfect alignment, low frequency (soldier formations)
+- **Micro-Frequency Grids** (Suspicious): Pixel-perfect, high frequency, often in sky/noise (GAN artifacts)
+
+```python
+# BEFORE (AMBIGUOUS)
+"Filter: IGNORE repetitive grid artifacts... caused by marching columns"
+
+# AFTER (PRECISE)
+"Filter: IGNORE MACRO-scale repetitive patterns (e.g., lines of soldiers, rows of tanks).
+Focus: FLAG MICRO-scale perfect pixel-grid anomalies or symmetric star patterns in noise floor."
+```
+
 ### Scientific Foundation
 
 #### Error Level Analysis (ELA)
@@ -792,22 +890,28 @@ print(f"Forensic Report:\n{result['forensic_report']}")
   - **Dark with edge noise** → Real photograph (varying compression)
 - **Metrics:**
   - **Variance Score:** `std_dev(ELA_pixel_values)`
-    - Low variance (<2.0) = Uniform compression (AI indicator)
-    - High variance (≥2.0) = Inconsistent compression (manipulation indicator)
+    - **Low variance (<2.0)**: INCONCLUSIVE on social media (aggressive re-compression by platforms like WhatsApp/Facebook)
+    - **High variance (≥2.0)**: Potential manipulation/splicing
+    - **VLM Guidance**: Focus on LOCAL inconsistencies (e.g., bright patch on dark background), NOT global uniformity
 
 #### Fast Fourier Transform (FFT)
 - **Purpose:** Detect frequency domain artifacts
 - **Principle:** GANs and diffusion models introduce periodic patterns in frequency domain
 - **Signatures:**
-  - **Grid/Starfield/Cross patterns** → AI-generated (GAN/Diffusion artifacts)
+  - **Grid/Starfield patterns** → AI-generated (GAN/Diffusion artifacts)
   - **Chaotic starburst** → Real photograph (natural frequency distribution)
-- **Preprocessing (NEW):**
-  1. Resize to 512x512 (standardized FFT window)
-  2. Apply High-Pass Filter (removes DC bias)
-  3. Dynamic peak threshold based on OSINT context
+- **Preprocessing (CRITICAL - FIXED Dec 12, 2025):**
+  1. **Center Crop + Padding** (NEVER resize - destroys high-frequency evidence)
+     - If image ≥ 512×512: Extract center 512×512 square
+     - If image < 512×512: Pad with `cv2.BORDER_REFLECT`
+  2. **Apply High-Pass Filter** (removes DC bias from natural lighting)
+  3. **Mask DC + Axes** (removes social media "JPEG Cross" artifact)
+     - Mask central DC component (5-pixel radius circle)
+     - Mask horizontal/vertical axes through center (±1-2 pixels)
+  4. **Dynamic peak threshold** based on OSINT context
 - **Metrics:**
   - **Peak Detection:** Identify peaks above threshold (default: 20, adjusted by context)
-  - **Pattern Classification:** Grid, Cross, Starfield, or Chaotic
+  - **Pattern Classification:** Grid, Starfield, or Chaotic (Cross pattern = social media artifact, now masked)
 
 #### EXIF Metadata Extraction (NEW)
 - **Purpose:** Instant rejection for known AI generation tools
