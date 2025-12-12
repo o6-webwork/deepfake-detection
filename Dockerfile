@@ -37,6 +37,7 @@ COPY --chown=appuser:appuser config.py .
 COPY --chown=appuser:appuser shared_functions.py .
 COPY --chown=appuser:appuser forensics.py .
 COPY --chown=appuser:appuser classifier.py .
+COPY --chown=appuser:appuser detector.py .
 COPY --chown=appuser:appuser generate_report_updated.py .
 
 # Create necessary directories with correct ownership

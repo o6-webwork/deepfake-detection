@@ -32,7 +32,7 @@ class ArtifactGenerator:
 
     @staticmethod
     def generate_ela(
-        image_input: Union[str, Image.Image, np.ndarray],
+        image_input: Union[str, bytes, Image.Image, np.ndarray],
         quality: int = 90,
         scale_factor: int = 15
     ) -> bytes:
@@ -75,6 +75,12 @@ class ArtifactGenerator:
             original = cv2.imread(image_input)
             if original is None:
                 raise ValueError(f"Could not load image from path: {image_input}")
+        elif isinstance(image_input, bytes):
+            # Decode bytes to numpy array
+            nparr = np.frombuffer(image_input, np.uint8)
+            original = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if original is None:
+                raise ValueError("Could not decode image from bytes")
         elif isinstance(image_input, Image.Image):
             # Convert PIL Image to OpenCV format (RGB -> BGR)
             original = cv2.cvtColor(np.array(image_input), cv2.COLOR_RGB2BGR)
@@ -82,7 +88,7 @@ class ArtifactGenerator:
             original = image_input.copy()
         else:
             raise TypeError(
-                "image_input must be str (path), PIL.Image, or numpy.ndarray"
+                "image_input must be str (path), bytes, PIL.Image, or numpy.ndarray"
             )
 
         # Validate quality parameter
@@ -125,7 +131,7 @@ class ArtifactGenerator:
 
     @staticmethod
     def generate_fft(
-        image_input: Union[str, Image.Image, np.ndarray]
+        image_input: Union[str, bytes, Image.Image, np.ndarray]
     ) -> bytes:
         """
         Generate Fast Fourier Transform (FFT) magnitude spectrum.
@@ -168,6 +174,13 @@ class ArtifactGenerator:
             gray = cv2.imread(image_input, cv2.IMREAD_GRAYSCALE)
             if gray is None:
                 raise ValueError(f"Could not load image from path: {image_input}")
+        elif isinstance(image_input, bytes):
+            # Decode bytes to numpy array, then convert to grayscale
+            nparr = np.frombuffer(image_input, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if img is None:
+                raise ValueError("Could not decode image from bytes")
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         elif isinstance(image_input, Image.Image):
             # Convert PIL Image to grayscale
             if image_input.mode == 'L':
@@ -186,7 +199,7 @@ class ArtifactGenerator:
                 )
         else:
             raise TypeError(
-                "image_input must be str (path), PIL.Image, or numpy.ndarray"
+                "image_input must be str (path), bytes, PIL.Image, or numpy.ndarray"
             )
 
         # Convert to float32 for DFT
@@ -313,7 +326,7 @@ class ArtifactGenerator:
 
     @staticmethod
     def generate_fft_preprocessed(
-        image_input: Union[str, Image.Image, np.ndarray],
+        image_input: Union[str, bytes, Image.Image, np.ndarray],
         target_size: int = 512,
         apply_highpass: bool = True
     ) -> Tuple[bytes, Dict[str, any]]:
@@ -352,6 +365,13 @@ class ArtifactGenerator:
             gray = cv2.imread(image_input, cv2.IMREAD_GRAYSCALE)
             if gray is None:
                 raise ValueError(f"Could not load image from path: {image_input}")
+        elif isinstance(image_input, bytes):
+            # Decode bytes to numpy array, then convert to grayscale
+            nparr = np.frombuffer(image_input, np.uint8)
+            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+            if img is None:
+                raise ValueError("Could not decode image from bytes")
+            gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
         elif isinstance(image_input, Image.Image):
             if image_input.mode == 'L':
                 gray = np.array(image_input)
@@ -366,7 +386,7 @@ class ArtifactGenerator:
                 raise ValueError(f"Invalid image array shape: {image_input.shape}")
         else:
             raise TypeError(
-                "image_input must be str (path), PIL.Image, or numpy.ndarray"
+                "image_input must be str (path), bytes, PIL.Image, or numpy.ndarray"
             )
 
         # Step 1: Center crop to square, then resize to standardized size
