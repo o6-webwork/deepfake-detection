@@ -148,11 +148,35 @@ with tab1:
 
     # Advanced Settings Expander
     with st.expander("⚙️ Advanced Settings", expanded=False):
-        # Forensic Report Toggle
-        send_forensics = st.checkbox(
-            "📊 Send Forensic Report to VLM",
-            value=False,
-            help="Include ELA/FFT forensic text report in VLM analysis. Disable if forensics provide more noise than signal."
+        # Detection Mode Selector
+        detection_mode = st.radio(
+            "🔬 Detection Mode",
+            options=["spai_assisted", "spai_standalone"],
+            format_func=lambda x: {
+                "spai_assisted": "SPAI + VLM (Comprehensive, ~3s)",
+                "spai_standalone": "SPAI Only (Fast, ~50ms)"
+            }[x],
+            index=0,
+            help="SPAI-assisted uses spectral analysis + VLM reasoning. SPAI-only is faster but less comprehensive."
+        )
+
+        # SPAI Configuration
+        st.markdown("**SPAI Configuration**")
+
+        spai_resolution = st.select_slider(
+            "SPAI Resolution (Longest Edge)",
+            options=[512, 768, 1024, 1280, 1536, 2048, "Original"],
+            value=1280,
+            help="Maximum resolution for SPAI spectral analysis. Higher = more accurate but slower."
+        )
+
+        spai_overlay_alpha = st.slider(
+            "Heatmap Overlay Transparency",
+            min_value=0.0,
+            max_value=1.0,
+            value=0.6,
+            step=0.05,
+            help="Alpha blending: 0.0 = pure heatmap, 1.0 = pure original. Default 0.6 = 60% original + 40% heatmap."
         )
 
         # Watermark Mode Toggle
@@ -224,33 +248,29 @@ with tab1:
         if st.session_state.media is not None:
             st.image(st.session_state.media, use_container_width=True, caption="Original Image")
 
-            # Display forensic artifacts if available
-            if st.session_state.forensic_artifacts is not None:
-                with st.expander("🔬 View Forensic Artifacts", expanded=False):
-                    ela_bytes, fft_bytes = st.session_state.forensic_artifacts
+            # Display SPAI artifacts if available
+            if st.session_state.forensic_artifacts is not None and st.session_state.forensic_artifacts[0] == "spai_heatmap":
+                with st.expander("🔬 View SPAI Attention Heatmap", expanded=False):
+                    st.markdown("### SPAI Spectral Analysis Overlay")
 
-                    # Three-column layout for artifacts
-                    st.markdown("### Forensic Analysis Maps")
+                    # Get heatmap from result if in debug mode
+                    result = st.session_state.osint_result
+                    if result and 'debug' in result:
+                        debug = result['debug']
+                        spai_score = debug.get('spai_score', 0)
+                        spai_pred = debug.get('spai_prediction', 'Unknown')
 
-                    col1, col2 = st.columns(2)
+                        st.markdown(f"""
+**SPAI Analysis:** {spai_pred} (Score: {spai_score:.3f})
 
-                    with col1:
-                        st.markdown("**ELA (Error Level Analysis)**")
-                        st.image(
-                            Image.open(io.BytesIO(ela_bytes)),
-                            use_container_width=True,
-                            caption="Compression inconsistency map"
-                        )
-                        st.caption("🔍 **AI signature:** Uniform rainbow static\n\n✓ **Real signature:** Dark regions with edge noise")
+The heatmap overlay was sent to the VLM as part of the spectral analysis context.
+Red/warm regions indicate suspicious frequency patterns detected by SPAI's Vision Transformer.
+Blue/cool regions show normal spectral distributions.
 
-                    with col2:
-                        st.markdown("**FFT (Frequency Spectrum)**")
-                        st.image(
-                            Image.open(io.BytesIO(fft_bytes)),
-                            use_container_width=True,
-                            caption="Frequency domain analysis"
-                        )
-                        st.caption("🔍 **AI signature:** Grid/cross patterns\n\n✓ **Real signature:** Chaotic starburst")
+*Note: The blended overlay (60% original + 40% heatmap) is embedded in the VLM analysis above.*
+                        """)
+                    else:
+                        st.info("SPAI heatmap is generated during analysis and provided to the VLM. Enable Debug Mode to see SPAI scores.")
 
                     # Show detailed OSINT result if available
                     if st.session_state.osint_result is not None:
@@ -343,7 +363,7 @@ with tab1:
                 analysis_image.save(img_bytes, format='PNG')
                 img_bytes = img_bytes.getvalue()
 
-                # Create OSINT detector
+                # Create OSINT detector with SPAI integration
                 config = MODEL_CONFIGS[detect_model_key]
                 detector = OSINTDetector(
                     base_url=config.get("base_url", ""),
@@ -351,24 +371,26 @@ with tab1:
                     api_key=config.get("api_key", "dummy"),
                     context=st.session_state.osint_context,
                     watermark_mode=watermark_mode,
-                    provider=config.get("provider", "vllm")
+                    provider=config.get("provider", "vllm"),
+                    detection_mode=detection_mode,
+                    spai_max_size=spai_resolution if spai_resolution != "Original" else None,
+                    spai_overlay_alpha=spai_overlay_alpha
                 )
 
-                # Run detection with debug mode
+                # Run detection with SPAI parameters
                 result = detector.detect(
                     img_bytes,
-                    debug=st.session_state.debug_mode,
-                    send_forensics=send_forensics
+                    debug=st.session_state.debug_mode
                 )
 
                 # Store result
                 st.session_state.osint_result = result
 
-                # Generate artifacts for display
-                ag = ArtifactGenerator()
-                ela_bytes = ag.generate_ela(img_bytes)
-                fft_bytes, _ = ag.generate_fft_preprocessed(img_bytes)
-                st.session_state.forensic_artifacts = (ela_bytes, fft_bytes)
+                # Store SPAI heatmap for display (if generated)
+                st.session_state.forensic_artifacts = None  # Clear old forensics
+                if 'debug' in result and detection_mode == "spai_assisted":
+                    # In spai_assisted mode, we have a heatmap
+                    st.session_state.forensic_artifacts = ("spai_heatmap", None)  # Marker for SPAI mode
 
                 # Create assistant message
                 tier = result['tier']
@@ -384,21 +406,25 @@ with tab1:
                 else:
                     tier_emoji = "✅"
 
+                # Format mode description
+                mode_desc = "SPAI + VLM" if detection_mode == "spai_assisted" else "SPAI Only"
+
                 assistant_msg = f"""**Model:** {detect_model_display}
+**Detection Mode:** {mode_desc}
 **OSINT Context:** {osint_context.capitalize()}
 
 **{tier_emoji} Classification: {tier}**
 **AI Generated Probability:** {p_fake_pct:.1f}%
 
-**VLM Reasoning:**
+**Analysis:**
 {reasoning}
 
-**Forensic Report:**
+**SPAI Spectral Report:**
 ```
-{result['forensic_report']}
+{result.get('spai_report', 'No SPAI report available')}
 ```
 
-💡 *View forensic artifacts below the image panel*
+💡 *View SPAI attention heatmap below the image panel (if in assisted mode)*
 """
 
                 # Add debug information if enabled
@@ -408,23 +434,25 @@ with tab1:
                     assistant_msg += f"""
 
 ---
-### 🔬 Debug: Forensic Lab Report (Raw Data)
+### 🔬 Debug: SPAI Spectral Analysis (Raw Data)
+
+**Detection Mode:** {debug.get('detection_mode', 'Unknown')}
 
 **EXIF Metadata:**
 ```
-{chr(10).join([f"{k}: {v}" for k, v in debug['exif_data'].items()]) if debug['exif_data'] else '(No EXIF data found)'}
+{chr(10).join([f"{k}: {v}" for k, v in debug.get('exif_data', {}).items()]) if debug.get('exif_data') else '(No EXIF data found)'}
 ```
 
-**ELA Analysis:**
-- Variance Score: {debug['ela_variance']:.2f}
-- Threshold: <2.0 (AI indicator)
-
-**FFT Analysis:**
-- Pattern Type: {debug['fft_pattern']}
-- Peaks Detected: {debug['fft_peaks']}
+**SPAI Spectral Analysis:**
+- SPAI Score: {debug.get('spai_score', 'N/A'):.4f} (AI generation probability)
+- SPAI Prediction: {debug.get('spai_prediction', 'N/A')}
+- SPAI Tier: {debug.get('spai_tier', 'N/A')}
 
 **OSINT Context Applied:** {debug['context_applied'].capitalize()}
-
+"""
+                    # Add VLM-specific debug info only if in assisted mode
+                    if detection_mode == "spai_assisted":
+                        assistant_msg += f"""
 ---
 ### 🧠 VLM Analysis Output
 
@@ -433,28 +461,28 @@ with tab1:
 
 **API Metadata:**
 - Model: {detect_model_display}
-- Request 1 Latency: {debug['request_1_latency']:.2f}s
-- Request 2 Latency: {debug['request_2_latency']:.2f}s (⚡ {((1 - debug['request_2_latency']/max(debug['request_1_latency'], 0.01)) * 100):.1f}% faster via KV-cache)
-- Request 1 Tokens: ~{debug['request_1_tokens']}
-- Request 2 Tokens: ~{debug['request_2_tokens']}
+- Request 1 Latency: {debug.get('request_1_latency', 0):.2f}s
+- Request 2 Latency: {debug.get('request_2_latency', 0):.2f}s (⚡ {((1 - debug.get('request_2_latency', 0)/max(debug.get('request_1_latency', 0.01), 0.01)) * 100):.1f}% faster via KV-cache)
+- Request 1 Tokens: ~{debug.get('request_1_tokens', 0)}
+- Request 2 Tokens: ~{debug.get('request_2_tokens', 0)}
 
 ---
 ### 📊 Logprobs & Verdict Extraction
 
 **Top K=5 Tokens:**
 """
-                    # Format top-k logprobs as table
-                    for i, (token, logprob) in enumerate(debug['top_k_logprobs'][:5], 1):
-                        prob = math.exp(logprob)
-                        interpretation = ""
-                        if token in detector.REAL_TOKENS:
-                            interpretation = "(REAL)"
-                        elif token in detector.FAKE_TOKENS:
-                            interpretation = "(FAKE)"
+                        # Format top-k logprobs as table
+                        for i, (token, logprob) in enumerate(debug.get('top_k_logprobs', [])[:5], 1):
+                            prob = math.exp(logprob)
+                            interpretation = ""
+                            if token in detector.REAL_TOKENS:
+                                interpretation = "(REAL)"
+                            elif token in detector.FAKE_TOKENS:
+                                interpretation = "(FAKE)"
 
-                        assistant_msg += f"\n{i}. `{repr(token)}`: {logprob:.3f} → {prob:.4f} {interpretation}"
+                            assistant_msg += f"\n{i}. `{repr(token)}`: {logprob:.3f} → {prob:.4f} {interpretation}"
 
-                    assistant_msg += f"""
+                        assistant_msg += f"""
 
 **Softmax Normalized Probabilities:**
 - AI Generated: {p_fake:.4f} ({p_fake_pct:.1f}%)
@@ -466,13 +494,13 @@ with tab1:
   * AI Generated < 50%? {'YES → Authentic' if p_fake < 0.50 else 'NO'}
   * AI Generated ≥ 90%? {'YES → Deepfake' if p_fake >= 0.90 else 'NO'}
 
-**Verdict Token:** `{result['verdict_token']}`
+**Verdict Token:** `{result.get('verdict_token', 'N/A')}`
 
 ---
 ### ⚙️ System Prompt
 
 ```
-{debug['system_prompt']}
+{debug.get('system_prompt', 'N/A (standalone mode)')}
 ```
 
 ---

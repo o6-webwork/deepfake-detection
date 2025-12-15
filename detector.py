@@ -75,7 +75,9 @@ class OSINTDetector:
         prompts_path: str = "prompts.yaml",
         detection_mode: str = "spai_assisted",
         spai_config_path: str = "spai/configs/spai.yaml",
-        spai_weights_path: str = "spai/weights/spai.pth"
+        spai_weights_path: str = "spai/weights/spai.pth",
+        spai_max_size: int = 1280,
+        spai_overlay_alpha: float = 0.6
     ):
         """
         Initialize OSINT detector with SPAI integration.
@@ -91,12 +93,16 @@ class OSINTDetector:
             detection_mode: "spai_standalone" (SPAI only) or "spai_assisted" (SPAI + VLM)
             spai_config_path: Path to SPAI config YAML
             spai_weights_path: Path to SPAI pre-trained weights
+            spai_max_size: Maximum resolution for SPAI analysis (512-2048 or None for original)
+            spai_overlay_alpha: Transparency for heatmap blending (0.0-1.0, default 0.6)
         """
         self.model_name = model_name
         self.context = context
         self.watermark_mode = watermark_mode
         self.provider = provider
         self.detection_mode = detection_mode
+        self.spai_max_size = spai_max_size if spai_max_size != "Original" else None
+        self.spai_overlay_alpha = spai_overlay_alpha
 
         # Initialize SPAI detector
         self.spai = SPAIDetector(
@@ -176,7 +182,8 @@ class OSINTDetector:
             # Run SPAI analysis
             spai_result = self.spai.analyze(
                 image_bytes,
-                generate_heatmap=False  # No heatmap needed in standalone mode
+                generate_heatmap=False,  # No heatmap needed in standalone mode
+                max_size=self.spai_max_size
             )
 
             # Convert SPAI confidence to logits for consistency
@@ -294,7 +301,8 @@ class OSINTDetector:
             spai_result = self.spai.analyze(
                 image_bytes,
                 generate_heatmap=True,  # Generate blended overlay for VLM
-                alpha=0.6  # 60% original, 40% heatmap (per user spec)
+                alpha=self.spai_overlay_alpha,
+                max_size=self.spai_max_size
             )
             stage1_time = time.time() - stage1_start
 
