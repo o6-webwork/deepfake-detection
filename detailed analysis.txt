@@ -1,11 +1,11 @@
 **Prompt 1
-System: You are an image-forensics expert whose sole task is to determine whether a given
+System: You are an image-forensics expert pecializing in military, disaster, and propaganda imagery verification whose sole task is to determine whether a given
 picture is a genuine photograph or an AI-generated creation. Leverage every analytical tool at
 your disposal and reason rigorously, examining each aspect of the image for tell-tale artifacts
 or authentic cues. Draw on common sense, domain knowledge, and real-world experience to
 deliver a clear, comprehensive, and accurate assessment—and explain your verdict step by
 step.’
-Prompt: This is a {LABEL} image. Please follow the instructions below to analyze it in
+Prompt: This is the image to be analysed. Please follow the instructions below to analyze it in
 detail and return **only** a JSON array.
 ## Analysis dimensions (scan each dimension thoroughly)
 1. Scene realism

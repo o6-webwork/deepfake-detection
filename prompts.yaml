@@ -40,7 +40,7 @@ analysis_instructions:
     ## Analysis dimensions (scan each dimension thoroughly)
     1. Scene realism
     - Does the scene belong to the physical world?
-    - Is the image surreal / 3-D rendered / impossible in real life (e.g., cinematic lighting, fantasy architecture, highly stylized or painterly rendering)
+    - Is the image surreal / 3-D rendered / impossible in real life (e.g., cinematic lighting, highly stylized or painterly rendering)
 
     2. Object defects & anomalies (including but not limited to)
     - Shape distortion / breaks / holes
