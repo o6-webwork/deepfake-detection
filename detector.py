@@ -436,7 +436,7 @@ OSINT Context: {self.context.capitalize()}
                 model=self.model_name,
                 messages=messages,
                 temperature=0.0,
-                max_tokens=500  # Increased from 300 for longer analysis instructions
+                max_tokens=1000  # Increased from 500 to allow for comprehensive analysis
             )
             req1_time = time.time() - req1_start
 

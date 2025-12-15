@@ -190,7 +190,8 @@ with tab1:
             if "image" in uploaded_file.type:
                 analysis_image = Image.open(io.BytesIO(media_bytes))
                 st.session_state.media = analysis_image
-                # Don't auto-append message anymore - wait for Analyze button
+                # Trigger rerun to enable Analyze button
+                st.rerun()
             else:
                 # Video processing with proper cleanup
                 tmp_path = None
@@ -205,7 +206,8 @@ with tab1:
                         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         analysis_image = Image.fromarray(frame_rgb)
                         st.session_state.media = analysis_image
-                        # Don't auto-append message anymore - wait for Analyze button
+                        # Trigger rerun to enable Analyze button
+                        st.rerun()
                     else:
                         st.error("Could not extract frames from video.")
                 finally:
