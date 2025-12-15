@@ -85,6 +85,15 @@ with tab1:
     )
     st.session_state.debug_mode = debug_mode
 
+    # Analyze Button
+    analyze_button = st.button(
+        "🔍 Analyze Image",
+        type="primary",
+        disabled=(st.session_state.media is None),
+        use_container_width=True,
+        help="Run deepfake detection on the uploaded image"
+    )
+
     # Advanced Settings Expander
     with st.expander("⚙️ Advanced Settings", expanded=False):
         # Forensic Report Toggle
@@ -129,9 +138,7 @@ with tab1:
             if "image" in uploaded_file.type:
                 analysis_image = Image.open(io.BytesIO(media_bytes))
                 st.session_state.media = analysis_image
-                st.session_state.messages.append(
-                    {"role": "user", "content": f"📷 Uploaded image: {uploaded_file.name}"}
-                )
+                # Don't auto-append message anymore - wait for Analyze button
             else:
                 # Video processing with proper cleanup
                 tmp_path = None
@@ -146,12 +153,7 @@ with tab1:
                         frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                         analysis_image = Image.fromarray(frame_rgb)
                         st.session_state.media = analysis_image
-                        st.session_state.messages.append(
-                            {
-                                "role": "user",
-                                "content": f"🎞️ Uploaded video: {uploaded_file.name}",
-                            }
-                        )
+                        # Don't auto-append message anymore - wait for Analyze button
                     else:
                         st.error("Could not extract frames from video.")
                 finally:
@@ -268,9 +270,20 @@ with tab1:
     if analysis_image is None:
         analysis_image = st.session_state.get("media")
 
-    if new_upload and analysis_image:
+    # Run analysis when Analyze button is clicked (not on upload)
+    if analyze_button and analysis_image:
         with st.spinner("🔬 Running OSINT detection pipeline..."):
             try:
+                # Add upload message if this is first analysis
+                if uploaded_file and not any(
+                    msg.get("content", "").startswith(f"📷 Uploaded image: {uploaded_file.name}")
+                    or msg.get("content", "").startswith(f"🎞️ Uploaded video: {uploaded_file.name}")
+                    for msg in st.session_state.messages
+                ):
+                    file_type = "📷 Uploaded image" if "image" in uploaded_file.type else "🎞️ Uploaded video"
+                    st.session_state.messages.append(
+                        {"role": "user", "content": f"{file_type}: {uploaded_file.name}"}
+                    )
                 # Convert PIL Image to bytes
                 img_bytes = io.BytesIO()
                 analysis_image.save(img_bytes, format='PNG')
@@ -279,11 +292,12 @@ with tab1:
                 # Create OSINT detector
                 config = MODEL_CONFIGS[detect_model_key]
                 detector = OSINTDetector(
-                    base_url=config["base_url"],
+                    base_url=config.get("base_url", ""),
                     model_name=config["model_name"],
                     api_key=config.get("api_key", "dummy"),
                     context=st.session_state.osint_context,
-                    watermark_mode=watermark_mode
+                    watermark_mode=watermark_mode,
+                    provider=config.get("provider", "vllm")
                 )
 
                 # Run detection with debug mode

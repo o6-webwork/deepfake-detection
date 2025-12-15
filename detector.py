@@ -11,6 +11,7 @@ import base64
 from typing import Dict, Tuple, List, Optional
 from openai import OpenAI
 from forensics import ArtifactGenerator
+from cloud_providers import get_cloud_adapter
 
 
 class OSINTDetector:
@@ -49,28 +50,38 @@ class OSINTDetector:
         model_name: str,
         api_key: str = "dummy",
         context: str = "auto",
-        watermark_mode: str = "ignore"
+        watermark_mode: str = "ignore",
+        provider: str = "vllm"
     ):
         """
         Initialize OSINT detector.
 
         Args:
-            base_url: OpenAI-compatible API endpoint
+            base_url: OpenAI-compatible API endpoint (for vLLM/OpenAI)
             model_name: Model identifier
             api_key: API key (default: "dummy" for vLLM)
             context: "auto", "military", "disaster", or "propaganda"
             watermark_mode: "ignore" (treat as news logos) or "analyze" (flag AI watermarks)
+            provider: "vllm", "openai", "anthropic", or "gemini"
         """
-        self.client = OpenAI(
-            base_url=base_url,
-            api_key=api_key,
-            timeout=180.0,  # 3 minute timeout to accommodate slower VLM inference
-            max_retries=0  # No retries to fail fast
-        )
         self.model_name = model_name
         self.context = context
         self.watermark_mode = watermark_mode
+        self.provider = provider
         self.artifact_gen = ArtifactGenerator()
+
+        # Initialize client based on provider
+        if provider in ["vllm", "openai"]:
+            # Use OpenAI SDK directly (supports both vLLM and OpenAI)
+            self.client = OpenAI(
+                base_url=base_url,
+                api_key=api_key,
+                timeout=180.0,  # 3 minute timeout to accommodate slower VLM inference
+                max_retries=0  # No retries to fail fast
+            )
+        else:
+            # Use cloud adapter for Anthropic/Gemini
+            self.client = get_cloud_adapter(provider, model_name, api_key, base_url)
 
     def detect(
         self,
