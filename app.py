@@ -17,7 +17,6 @@ from shared_functions import (
     display_confusion_matrix,
 )
 from config import PROMPTS, SYSTEM_PROMPT, MODEL_CONFIGS
-from forensics import generate_both, ArtifactGenerator
 from classifier import create_classifier_from_config
 from detector import OSINTDetector
 

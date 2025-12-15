@@ -428,28 +428,28 @@ if __name__ == "__main__":
     print("Usage Example:")
     print("-" * 60)
     print("""
-    from forensics import generate_both
-    from classifier import create_classifier_from_config
+    from detector import OSINTDetector
     from PIL import Image
+    import io
 
     # Load image
     image = Image.open('photo.jpg')
+    img_bytes = io.BytesIO()
+    image.save(img_bytes, format='PNG')
+    img_bytes = img_bytes.getvalue()
 
-    # Generate forensic artifacts
-    ela_bytes, fft_bytes = generate_both(image)
-
-    # Create classifier
-    classifier = create_classifier_from_config("Qwen3-VL-32B-Instruct")
-
-    # Classify
-    result = classifier.classify_pil_image(
-        Image.open(io.BytesIO(original_bytes)),
-        Image.open(io.BytesIO(ela_bytes)),
-        Image.open(io.BytesIO(fft_bytes))
+    # Create OSINT detector with SPAI
+    detector = OSINTDetector(
+        base_url="http://localhost:8000/v1",
+        model_name="Qwen/Qwen2-VL-7B-Instruct",
+        detection_mode="spai_assisted"  # or "spai_standalone"
     )
 
-    print(f"Classification: {result['classification']}")
-    print(f"Confidence: {result['confidence_score']:.2%}")
-    print(f"Raw logits: Real={result['raw_logits']['real']:.3f}, "
-          f"Fake={result['raw_logits']['fake']:.3f}")
+    # Run detection
+    result = detector.detect(img_bytes, debug=True)
+
+    print(f"Classification: {result['tier']}")
+    print(f"Confidence: {result['confidence']:.2%}")
+    print(f"SPAI Score: {result['debug']['spai_score']:.3f}")
+    print(f"Reasoning: {result['reasoning']}")
     """)
