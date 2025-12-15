@@ -574,10 +574,12 @@ with tab2:
         )
 
     with col2:
-        send_forensics = st.checkbox(
-            "Include Forensics",
-            value=True,
-            help="Send ELA/FFT artifacts to model for analysis"
+        eval_detection_mode = st.radio(
+            "Detection Mode",
+            options=["spai_assisted", "spai_standalone"],
+            format_func=lambda x: "SPAI + VLM" if x == "spai_assisted" else "SPAI Only",
+            index=0,
+            help="SPAI-assisted uses VLM reasoning, standalone is faster"
         )
 
     with col3:
@@ -628,13 +630,15 @@ with tab2:
                         gt_df["filename"] == filename, "label"
                     ].values[0]
 
-                    # Run detection once per image with new system
+                    # Run detection once per image with SPAI
                     res = analyze_single_image(
                         image=img,
                         model_config=model_config,
                         context=eval_context,
                         watermark_mode=watermark_mode,
-                        send_forensics=send_forensics
+                        detection_mode=eval_detection_mode,
+                        spai_max_size=1280,  # Default resolution for batch evaluation
+                        spai_overlay_alpha=0.6  # Default transparency
                     )
 
                     # Extract results

@@ -57,17 +57,21 @@ def analyze_single_image(
     model_config: Dict,
     context: str = "auto",
     watermark_mode: str = "ignore",
-    send_forensics: bool = True
+    detection_mode: str = "spai_assisted",
+    spai_max_size: int = 1280,
+    spai_overlay_alpha: float = 0.6
 ) -> Dict:
     """
-    Analyze a single image using the OSINT deepfake detector.
+    Analyze a single image using the OSINT deepfake detector with SPAI.
 
     Args:
         image: PIL Image to analyze
         model_config: Model configuration dict from MODEL_CONFIGS
         context: OSINT context ("auto", "military", "disaster", "propaganda")
         watermark_mode: "ignore" or "analyze"
-        send_forensics: Whether to include ELA/FFT forensic artifacts
+        detection_mode: "spai_standalone" or "spai_assisted"
+        spai_max_size: Maximum resolution for SPAI analysis (512-2048 or None)
+        spai_overlay_alpha: Transparency for heatmap blending (0.0-1.0)
 
     Returns:
         {
@@ -83,21 +87,23 @@ def analyze_single_image(
     image.save(buffered, format="PNG")
     image_bytes = buffered.getvalue()
 
-    # Initialize detector with model config
+    # Initialize detector with SPAI configuration
     detector = OSINTDetector(
         base_url=model_config.get('base_url', ''),
         model_name=model_config.get('model_name', ''),
         api_key=model_config.get('api_key', 'dummy'),
         context=context,
         watermark_mode=watermark_mode,
-        provider=model_config.get('provider', 'vllm')
+        provider=model_config.get('provider', 'vllm'),
+        detection_mode=detection_mode,
+        spai_max_size=spai_max_size,
+        spai_overlay_alpha=spai_overlay_alpha
     )
 
     # Run detection
     result = detector.detect(
         image_bytes=image_bytes,
-        debug=False,
-        send_forensics=send_forensics
+        debug=False
     )
 
     # Convert to evaluation format
