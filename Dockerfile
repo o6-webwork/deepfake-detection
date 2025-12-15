@@ -35,13 +35,21 @@ RUN useradd -m -s /bin/bash --uid 1001 appuser
 COPY --chown=appuser:appuser app.py .
 COPY --chown=appuser:appuser config.py .
 COPY --chown=appuser:appuser shared_functions.py .
-COPY --chown=appuser:appuser forensics.py .
 COPY --chown=appuser:appuser classifier.py .
 COPY --chown=appuser:appuser detector.py .
+COPY --chown=appuser:appuser spai_detector.py .
 COPY --chown=appuser:appuser cloud_providers.py .
 COPY --chown=appuser:appuser generate_report_updated.py .
 COPY --chown=appuser:appuser models.json.example .
 COPY --chown=appuser:appuser prompts.yaml .
+
+# Copy SPAI module and required subdirectories
+COPY --chown=appuser:appuser spai/ ./spai/
+
+# NOTE: SPAI weights must be downloaded separately due to size
+# Download spai.pth from: https://drive.google.com/file/d/1vvXmZqs6TVJdj8iF1oJ4L_fcgdQrp_YI/view
+# Place in: spai/weights/spai.pth before building the Docker image
+# The file should exist at: spai/weights/spai.pth
 
 # Create necessary directories with correct ownership
 RUN mkdir -p results testing_files misc analysis_output && \

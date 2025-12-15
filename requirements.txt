@@ -11,3 +11,16 @@ pyyaml>=6.0.0
 # Cloud VLM providers
 anthropic>=0.34.0
 google-generativeai>=0.8.0
+
+# SPAI (Spectral AI-Generated Image Detector) dependencies
+torch>=2.0.0
+torchvision>=0.15.0
+scipy>=1.14.0
+timm==0.4.12
+yacs>=0.1.8
+torchmetrics>=1.4.0
+tqdm>=4.66.0
+albumentations==1.4.14
+albucore==0.0.16
+einops>=0.8.0
+numpy>=1.26.0
