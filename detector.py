@@ -75,7 +75,8 @@ class OSINTDetector:
     def detect(
         self,
         image_bytes: bytes,
-        debug: bool = False
+        debug: bool = False,
+        send_forensics: bool = True
     ) -> Dict:
         """
         Perform two-stage OSINT-aware deepfake detection.
@@ -83,6 +84,7 @@ class OSINTDetector:
         Args:
             image_bytes: Original image as PNG/JPEG bytes
             debug: If True, include detailed debug information
+            send_forensics: If True, send forensic artifacts (ELA/FFT images + text report) to VLM (default: True)
 
         Returns:
             {
@@ -183,7 +185,8 @@ class OSINTDetector:
                 ela_bytes,
                 fft_bytes,
                 forensic_report,
-                system_prompt
+                system_prompt,
+                send_forensics
             )
         except Exception as e:
             # If VLM calls fail, return forensic report with error message
@@ -312,66 +315,107 @@ OSINT Context: {self.context.capitalize()}
         ela_bytes: bytes,
         fft_bytes: bytes,
         forensic_report: str,
-        system_prompt: str
+        system_prompt: str,
+        send_forensics: bool = True
     ) -> Tuple[str, Dict, float, float, int, int]:
         """
         Perform two-stage API calls for analysis + verdict.
+
+        Args:
+            original_bytes: Original image bytes
+            ela_bytes: ELA artifact bytes
+            fft_bytes: FFT artifact bytes
+            forensic_report: Text forensic report
+            system_prompt: System prompt for VLM
+            send_forensics: If True, include ELA/FFT images and forensic text in VLM prompt
 
         Returns:
             (analysis_text, verdict_result, req1_time, req2_time, req1_tokens, req2_tokens)
         """
         # Convert images to base64
         original_uri = f"data:image/png;base64,{base64.b64encode(original_bytes).decode()}"
-        ela_uri = f"data:image/png;base64,{base64.b64encode(ela_bytes).decode()}"
-        fft_uri = f"data:image/png;base64,{base64.b64encode(fft_bytes).decode()}"
 
-        # Request 1: Analysis (with forensic evidence)
+        # Build user message content based on send_forensics flag
+        user_content = []
+
+        if send_forensics:
+            # Include forensic artifacts and detailed interpretation
+            ela_uri = f"data:image/png;base64,{base64.b64encode(ela_bytes).decode()}"
+            fft_uri = f"data:image/png;base64,{base64.b64encode(fft_bytes).decode()}"
+
+            user_content.extend([
+                {"type": "text", "text": "--- FORENSIC LAB REPORT ---"},
+                {"type": "text", "text": forensic_report},
+                {"type": "text", "text": "--- ORIGINAL IMAGE ---"},
+                {"type": "image_url", "image_url": {"url": original_uri}},
+                {"type": "text", "text": "--- ELA MAP ---"},
+                {"type": "image_url", "image_url": {"url": ela_uri}},
+                {"type": "text", "text": "--- FFT SPECTRUM ---"},
+                {"type": "image_url", "image_url": {"url": fft_uri}},
+                {
+                    "type": "text",
+                    "text": (
+                        "--- FORENSIC INTERPRETATION GUIDE ---\n"
+                        "FFT Pattern Types:\n"
+                        "- 'Natural/Chaotic (High Entropy)' = Real photo with grain/noise (>2000 peaks at 5-sigma)\n"
+                        "- 'High Freq Artifacts (Suspected AI)' = Sparse bright GAN grid stars (20-2000 peaks)\n"
+                        "- 'Natural/Clean' = Clean authentic image (<20 peaks)\n\n"
+                        "ELA Variance:\n"
+                        "- Low variance (<2.0) is INCONCLUSIVE on social media (WhatsApp/Facebook re-compression)\n"
+                        "- Real WhatsApp photos often have variance ~0.5\n"
+                        "- Focus on LOCAL inconsistencies (bright patch on dark), NOT global uniformity\n\n"
+                        "FFT Black Cross: You may see a BLACK cross (+) in the center - this is a masking "
+                        "artifact to remove social media border noise. IGNORE IT.\n\n"
+                        "--- ANALYSIS INSTRUCTIONS ---\n"
+                        "Perform a comprehensive analysis:\n\n"
+                        "1. **Physical/Visual Analysis** (PRIMARY - Analyze the ORIGINAL IMAGE):\n"
+                        "   - Anatomy: Check for extra/missing fingers, wrong proportions, facial anomalies\n"
+                        "   - Physics: Impossible shadows, lighting inconsistencies, gravity violations\n"
+                        "   - Composition: Text rendering errors, blurry backgrounds, object coherence\n"
+                        "   - Textures: Unnatural smoothness (plastic skin), repetitive patterns\n\n"
+                        "2. **Forensic Correlation**:\n"
+                        "   - Does the ELA show local inconsistencies suggesting manipulation?\n"
+                        "   - Does the FFT show bright grid stars indicating GAN synthesis?\n"
+                        "   - Apply the appropriate OSINT protocol for this scene type\n\n"
+                        "3. **Metadata Check**:\n"
+                        "   - Any AI tool signatures detected?\n"
+                        "   - Professional camera vs smartphone vs no metadata?\n\n"
+                        f"4. **Watermark Analysis**: {self._get_watermark_instruction()}\n\n"
+                        "Provide your reasoning for whether this image is authentic or AI-generated."
+                    )
+                }
+            ])
+        else:
+            # Only send original image with simplified analysis instructions
+            user_content.extend([
+                {"type": "text", "text": "--- IMAGE TO ANALYZE ---"},
+                {"type": "image_url", "image_url": {"url": original_uri}},
+                {
+                    "type": "text",
+                    "text": (
+                        "--- ANALYSIS INSTRUCTIONS ---\n"
+                        "Perform a comprehensive visual analysis of this image:\n\n"
+                        "1. **Physical/Visual Analysis**:\n"
+                        "   - Anatomy: Check for extra/missing fingers, wrong proportions, facial anomalies\n"
+                        "   - Physics: Impossible shadows, lighting inconsistencies, gravity violations\n"
+                        "   - Composition: Text rendering errors, blurry backgrounds, object coherence\n"
+                        "   - Textures: Unnatural smoothness (plastic skin), repetitive patterns\n\n"
+                        "2. **Scene Coherence**:\n"
+                        "   - Do objects interact naturally with their environment?\n"
+                        "   - Are perspective and scale consistent?\n"
+                        "   - Are there any visual artifacts or anomalies?\n\n"
+                        f"3. **Watermark Analysis**: {self._get_watermark_instruction()}\n\n"
+                        "Provide your reasoning for whether this image is authentic or AI-generated."
+                    )
+                }
+            ])
+
+        # Request 1: Analysis
         messages = [
             {"role": "system", "content": system_prompt},
             {
                 "role": "user",
-                "content": [
-                    {"type": "text", "text": "--- FORENSIC LAB REPORT ---"},
-                    {"type": "text", "text": forensic_report},
-                    {"type": "text", "text": "--- ORIGINAL IMAGE ---"},
-                    {"type": "image_url", "image_url": {"url": original_uri}},
-                    {"type": "text", "text": "--- ELA MAP ---"},
-                    {"type": "image_url", "image_url": {"url": ela_uri}},
-                    {"type": "text", "text": "--- FFT SPECTRUM ---"},
-                    {"type": "image_url", "image_url": {"url": fft_uri}},
-                    {
-                        "type": "text",
-                        "text": (
-                            "--- FORENSIC INTERPRETATION GUIDE ---\n"
-                            "FFT Pattern Types:\n"
-                            "- 'Natural/Chaotic (High Entropy)' = Real photo with grain/noise (>2000 peaks at 5-sigma)\n"
-                            "- 'High Freq Artifacts (Suspected AI)' = Sparse bright GAN grid stars (20-2000 peaks)\n"
-                            "- 'Natural/Clean' = Clean authentic image (<20 peaks)\n\n"
-                            "ELA Variance:\n"
-                            "- Low variance (<2.0) is INCONCLUSIVE on social media (WhatsApp/Facebook re-compression)\n"
-                            "- Real WhatsApp photos often have variance ~0.5\n"
-                            "- Focus on LOCAL inconsistencies (bright patch on dark), NOT global uniformity\n\n"
-                            "FFT Black Cross: You may see a BLACK cross (+) in the center - this is a masking "
-                            "artifact to remove social media border noise. IGNORE IT.\n\n"
-                            "--- ANALYSIS INSTRUCTIONS ---\n"
-                            "Perform a comprehensive analysis:\n\n"
-                            "1. **Physical/Visual Analysis** (PRIMARY - Analyze the ORIGINAL IMAGE):\n"
-                            "   - Anatomy: Check for extra/missing fingers, wrong proportions, facial anomalies\n"
-                            "   - Physics: Impossible shadows, lighting inconsistencies, gravity violations\n"
-                            "   - Composition: Text rendering errors, blurry backgrounds, object coherence\n"
-                            "   - Textures: Unnatural smoothness (plastic skin), repetitive patterns\n\n"
-                            "2. **Forensic Correlation**:\n"
-                            "   - Does the ELA show local inconsistencies suggesting manipulation?\n"
-                            "   - Does the FFT show bright grid stars indicating GAN synthesis?\n"
-                            "   - Apply the appropriate OSINT protocol for this scene type\n\n"
-                            "3. **Metadata Check**:\n"
-                            "   - Any AI tool signatures detected?\n"
-                            "   - Professional camera vs smartphone vs no metadata?\n\n"
-                            f"4. **Watermark Analysis**: {self._get_watermark_instruction()}\n\n"
-                            "Provide your reasoning for whether this image is authentic or AI-generated."
-                        )
-                    }
-                ]
+                "content": user_content
             }
         ]
 

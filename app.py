@@ -85,6 +85,27 @@ with tab1:
     )
     st.session_state.debug_mode = debug_mode
 
+    # Advanced Settings Expander
+    with st.expander("⚙️ Advanced Settings", expanded=False):
+        # Forensic Report Toggle
+        send_forensics = st.checkbox(
+            "📊 Send Forensic Report to VLM",
+            value=False,
+            help="Include ELA/FFT forensic text report in VLM analysis. Disable if forensics provide more noise than signal."
+        )
+
+        # Watermark Mode Toggle
+        watermark_mode = st.selectbox(
+            "🏷️ Watermark Handling",
+            options=["ignore", "analyze"],
+            format_func=lambda x: {
+                "ignore": "Ignore (Treat as news logos)",
+                "analyze": "Analyze (Flag AI watermarks)"
+            }[x],
+            index=0,
+            help="'Ignore' treats watermarks as news agency logos. 'Analyze' actively scans for AI tool watermarks (Sora, NanoBanana, etc.)"
+        )
+
     left_col, right_col = st.columns([1, 2], gap="large")
 
     uploaded_file = right_col.file_uploader(
@@ -261,13 +282,15 @@ with tab1:
                     base_url=config["base_url"],
                     model_name=config["model_name"],
                     api_key=config.get("api_key", "dummy"),
-                    context=st.session_state.osint_context
+                    context=st.session_state.osint_context,
+                    watermark_mode=watermark_mode
                 )
 
                 # Run detection with debug mode
                 result = detector.detect(
                     img_bytes,
-                    debug=st.session_state.debug_mode
+                    debug=st.session_state.debug_mode,
+                    send_forensics=send_forensics
                 )
 
                 # Store result
