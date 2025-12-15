@@ -1,8 +1,8 @@
 """
-Two-stage OSINT-aware deepfake detection with KV-cache optimization.
+Two-stage OSINT-aware deepfake detection with SPAI spectral analysis.
 
-This module coordinates forensic analysis, context injection, and verdict extraction
-using a hybrid "Cyborg" architecture that combines signal processing with semantic reasoning.
+This module coordinates SPAI spectral analysis, context injection, and verdict extraction
+using a hybrid architecture that combines frequency-domain learning with semantic reasoning.
 """
 
 import math
@@ -12,18 +12,26 @@ import yaml
 from pathlib import Path
 from typing import Dict, Tuple, List, Optional
 from openai import OpenAI
-from forensics import ArtifactGenerator
+from spai_detector import SPAIDetector
 from cloud_providers import get_cloud_adapter
 
 
 class OSINTDetector:
     """
-    Two-stage OSINT-specialized deepfake detector.
+    SPAI-powered OSINT-specialized deepfake detector.
 
-    Architecture:
+    Detection Modes:
+        - spai_standalone: SPAI spectral analysis only (fast, ~50ms)
+        - spai_assisted: SPAI + VLM comprehensive analysis (~3s)
+
+    Architecture (spai_standalone):
+        Stage 1: SPAI spectral analysis
+        Stage 2: Three-tier classification
+
+    Architecture (spai_assisted):
         Stage 0: Metadata extraction with auto-fail check
-        Stage 1: Forensic artifact generation (ELA + FFT)
-        Stage 2: VLM analysis with reasoning (Request 1)
+        Stage 1: SPAI spectral analysis with heatmap generation
+        Stage 2: VLM analysis with SPAI context (Request 1)
         Stage 3: Verdict extraction with logprobs (Request 2, KV-cached)
         Stage 4: Three-tier classification
 
@@ -64,10 +72,13 @@ class OSINTDetector:
         context: str = "auto",
         watermark_mode: str = "ignore",
         provider: str = "vllm",
-        prompts_path: str = "prompts.yaml"
+        prompts_path: str = "prompts.yaml",
+        detection_mode: str = "spai_assisted",
+        spai_config_path: str = "spai/configs/spai.yaml",
+        spai_weights_path: str = "spai/weights/spai.pth"
     ):
         """
-        Initialize OSINT detector.
+        Initialize OSINT detector with SPAI integration.
 
         Args:
             base_url: OpenAI-compatible API endpoint (for vLLM/OpenAI)
@@ -77,49 +88,60 @@ class OSINTDetector:
             watermark_mode: "ignore" (treat as news logos) or "analyze" (flag AI watermarks)
             provider: "vllm", "openai", "anthropic", or "gemini"
             prompts_path: Path to YAML prompts configuration file
+            detection_mode: "spai_standalone" (SPAI only) or "spai_assisted" (SPAI + VLM)
+            spai_config_path: Path to SPAI config YAML
+            spai_weights_path: Path to SPAI pre-trained weights
         """
         self.model_name = model_name
         self.context = context
         self.watermark_mode = watermark_mode
         self.provider = provider
-        self.artifact_gen = ArtifactGenerator()
+        self.detection_mode = detection_mode
+
+        # Initialize SPAI detector
+        self.spai = SPAIDetector(
+            config_path=spai_config_path,
+            weights_path=spai_weights_path
+        )
 
         # Load prompts from YAML
         self.prompts = self._load_prompts(prompts_path)
 
-        # Initialize client based on provider
-        if provider in ["vllm", "openai"]:
-            # Use OpenAI SDK directly (supports both vLLM and OpenAI)
-            self.client = OpenAI(
-                base_url=base_url,
-                api_key=api_key,
-                timeout=180.0,  # 3 minute timeout to accommodate slower VLM inference
-                max_retries=0  # No retries to fail fast
-            )
+        # Initialize VLM client only if needed for spai_assisted mode
+        if detection_mode == "spai_assisted":
+            if provider in ["vllm", "openai"]:
+                # Use OpenAI SDK directly (supports both vLLM and OpenAI)
+                self.client = OpenAI(
+                    base_url=base_url,
+                    api_key=api_key,
+                    timeout=180.0,  # 3 minute timeout to accommodate slower VLM inference
+                    max_retries=0  # No retries to fail fast
+                )
+            else:
+                # Use cloud adapter for Anthropic/Gemini
+                self.client = get_cloud_adapter(provider, model_name, api_key, base_url)
         else:
-            # Use cloud adapter for Anthropic/Gemini
-            self.client = get_cloud_adapter(provider, model_name, api_key, base_url)
+            # Standalone mode doesn't need VLM client
+            self.client = None
 
     def detect(
         self,
         image_bytes: bytes,
-        debug: bool = False,
-        send_forensics: bool = True
+        debug: bool = False
     ) -> Dict:
         """
-        Perform two-stage OSINT-aware deepfake detection.
+        Perform SPAI-powered deepfake detection.
 
         Args:
             image_bytes: Original image as PNG/JPEG bytes
             debug: If True, include detailed debug information
-            send_forensics: If True, send forensic artifacts (ELA/FFT images + text report) to VLM (default: True)
 
         Returns:
             {
                 "tier": str ("Authentic" / "Suspicious" / "Deepfake"),
                 "confidence": float (0.0-1.0),
-                "reasoning": str (analysis from stage 2),
-                "forensic_report": str (ELA/FFT/EXIF findings),
+                "reasoning": str (analysis text),
+                "spai_report": str (SPAI spectral analysis report),
                 "metadata_auto_fail": bool,
                 "raw_logits": {"real": float, "fake": float},
                 "verdict_token": str,
@@ -128,11 +150,101 @@ class OSINTDetector:
                 "debug": {...}
             }
         """
+        if self.detection_mode == "spai_standalone":
+            return self._detect_spai_standalone(image_bytes, debug)
+        elif self.detection_mode == "spai_assisted":
+            return self._detect_spai_assisted(image_bytes, debug)
+        else:
+            raise ValueError(f"Invalid detection_mode: {self.detection_mode}")
+
+    def _detect_spai_standalone(self, image_bytes: bytes, debug: bool = False) -> Dict:
+        """
+        SPAI standalone mode: Fast spectral analysis without VLM.
+
+        Returns results in ~50ms with SPAI spectral classification only.
+
+        Args:
+            image_bytes: Original image bytes
+            debug: If True, include debug information
+
+        Returns:
+            Detection result dict with SPAI analysis
+        """
         pipeline_start = time.time()
 
-        # Wrap entire pipeline in try-except to ensure forensic report is always returned
         try:
-            # Stage 0: Check metadata for auto-fail
+            # Run SPAI analysis
+            spai_result = self.spai.analyze(
+                image_bytes,
+                generate_heatmap=False  # No heatmap needed in standalone mode
+            )
+
+            # Convert SPAI confidence to logits for consistency
+            spai_score = spai_result["spai_score"]  # 0.0-1.0 (AI probability)
+            confidence_fake = spai_result["spai_confidence"]
+
+            # Create pseudo-logits (for consistency with VLM mode)
+            if spai_score >= 0.5:
+                # AI Generated
+                logit_fake = 0.0
+                logit_real = -math.log((1 - spai_score) / spai_score) if spai_score < 1.0 else -100.0
+            else:
+                # Real
+                logit_real = 0.0
+                logit_fake = -math.log(spai_score / (1 - spai_score)) if spai_score > 0.0 else -100.0
+
+            total_time = time.time() - pipeline_start
+
+            result = {
+                "tier": spai_result["tier"],
+                "confidence": confidence_fake,
+                "reasoning": spai_result["analysis_text"],
+                "spai_report": spai_result["analysis_text"],
+                "metadata_auto_fail": False,
+                "raw_logits": {"real": logit_real, "fake": logit_fake},
+                "verdict_token": "B" if spai_result["spai_prediction"] == "AI Generated" else "A"
+            }
+
+            if debug:
+                result["debug"] = {
+                    "detection_mode": "spai_standalone",
+                    "spai_score": spai_score,
+                    "spai_prediction": spai_result["spai_prediction"],
+                    "total_pipeline_time": total_time,
+                    "spai_inference_time": total_time  # Majority of time is SPAI
+                }
+
+            return result
+
+        except Exception as e:
+            # Error handling
+            return {
+                "tier": "Suspicious",
+                "confidence": 0.5,
+                "reasoning": f"SPAI analysis error: {type(e).__name__}: {str(e)}",
+                "spai_report": f"Error during SPAI inference: {str(e)}",
+                "metadata_auto_fail": False,
+                "raw_logits": {"real": -0.69, "fake": -0.69},
+                "verdict_token": None
+            }
+
+    def _detect_spai_assisted(self, image_bytes: bytes, debug: bool = False) -> Dict:
+        """
+        SPAI assisted mode: SPAI spectral analysis + VLM comprehensive reasoning.
+
+        Uses SPAI heatmap overlay as visual input to VLM for enhanced analysis.
+
+        Args:
+            image_bytes: Original image bytes
+            debug: If True, include debug information
+
+        Returns:
+            Detection result dict with SPAI + VLM analysis
+        """
+        pipeline_start = time.time()
+
+        # Stage 0: Check metadata for auto-fail
+        try:
             stage0_start = time.time()
             metadata_dict, metadata_report, auto_fail = self._check_metadata(image_bytes)
             stage0_time = time.time() - stage0_start
@@ -142,7 +254,7 @@ class OSINTDetector:
                 "tier": "Suspicious",
                 "confidence": 0.5,
                 "reasoning": f"Pipeline initialization error: {type(e).__name__}: {str(e)}",
-                "forensic_report": "Error: Could not extract metadata",
+                "spai_report": "Error: Could not extract metadata",
                 "metadata_auto_fail": False,
                 "raw_logits": {"real": -0.69, "fake": -0.69},
                 "verdict_token": None
@@ -153,7 +265,7 @@ class OSINTDetector:
                 "tier": "Deepfake",
                 "confidence": 1.0,
                 "reasoning": "AI generation tool detected in image metadata",
-                "forensic_report": metadata_report,
+                "spai_report": metadata_report,
                 "metadata_auto_fail": True,
                 "raw_logits": {"real": -100.0, "fake": 0.0},
                 "verdict_token": "B"
@@ -161,13 +273,10 @@ class OSINTDetector:
 
             if debug:
                 result["debug"] = {
+                    "detection_mode": "spai_assisted",
                     "system_prompt": "N/A (auto-fail)",
                     "exif_data": metadata_dict,
-                    "ela_variance": 0.0,
-                    "fft_pattern": "N/A",
-                    "fft_peaks": 0,
                     "context_applied": self.context,
-                    "threshold_adjustments": {},
                     "request_1_latency": 0.0,
                     "request_2_latency": 0.0,
                     "request_1_tokens": 0,
@@ -179,50 +288,51 @@ class OSINTDetector:
 
             return result
 
-        # Stage 1: Generate forensic artifacts (with error handling)
+        # Stage 1: Run SPAI analysis with heatmap generation (with error handling)
         try:
             stage1_start = time.time()
-            ela_bytes = self.artifact_gen.generate_ela(image_bytes)
-            fft_bytes, fft_metrics = self.artifact_gen.generate_fft_preprocessed(image_bytes)
-            ela_variance = self.artifact_gen.compute_ela_variance(ela_bytes)
+            spai_result = self.spai.analyze(
+                image_bytes,
+                generate_heatmap=True,  # Generate blended overlay for VLM
+                alpha=0.6  # 60% original, 40% heatmap (per user spec)
+            )
             stage1_time = time.time() - stage1_start
 
-            # Build forensic report text
-            forensic_report = self._build_forensic_report(
-                metadata_report,
-                ela_variance,
-                fft_metrics
-            )
+            # Build SPAI report combining metadata + spectral analysis
+            spai_report = f"""{metadata_report}
+
+{spai_result['analysis_text']}
+
+OSINT Context: {self.context.capitalize()}
+"""
         except Exception as e:
-            # If forensic generation fails, return error with metadata at least
+            # If SPAI generation fails, return error with metadata at least
             return {
                 "tier": "Suspicious",
                 "confidence": 0.5,
-                "reasoning": f"Forensic generation error: {type(e).__name__}: {str(e)}",
-                "forensic_report": f"{metadata_report}\n\nError: Could not generate ELA/FFT artifacts",
+                "reasoning": f"SPAI analysis error: {type(e).__name__}: {str(e)}",
+                "spai_report": f"{metadata_report}\n\nError: Could not generate SPAI analysis",
                 "metadata_auto_fail": False,
                 "raw_logits": {"real": -0.69, "fake": -0.69},
                 "verdict_token": None
             }
 
-        # Stage 2 & 3: Two-stage API calls (with error handling)
+        # Stage 2 & 3: Two-stage VLM calls with SPAI context (with error handling)
         try:
-            system_prompt = self._get_system_prompt(send_forensics)
-            analysis, verdict_result, req1_time, req2_time, req1_tokens, req2_tokens = self._two_stage_classification(
+            system_prompt = self._get_system_prompt_spai()
+            analysis, verdict_result, req1_time, req2_time, req1_tokens, req2_tokens = self._two_stage_classification_spai(
                 image_bytes,
-                ela_bytes,
-                fft_bytes,
-                forensic_report,
-                system_prompt,
-                send_forensics
+                spai_result["heatmap_bytes"],
+                spai_report,
+                system_prompt
             )
         except Exception as e:
-            # If VLM calls fail, return forensic report with error message
+            # If VLM calls fail, return SPAI report with error message
             return {
                 "tier": "Suspicious",
                 "confidence": 0.5,
                 "reasoning": f"VLM analysis error: {type(e).__name__}: {str(e)}",
-                "forensic_report": forensic_report,  # At least show forensics
+                "spai_report": spai_report,  # At least show SPAI analysis
                 "metadata_auto_fail": False,
                 "raw_logits": {"real": -0.69, "fake": -0.69},
                 "verdict_token": None
@@ -237,7 +347,7 @@ class OSINTDetector:
             "tier": tier,
             "confidence": verdict_result["confidence"],
             "reasoning": analysis,
-            "forensic_report": forensic_report,
+            "spai_report": spai_report,
             "metadata_auto_fail": False,
             "raw_logits": verdict_result["raw_logits"],
             "verdict_token": verdict_result["token"]
@@ -245,11 +355,12 @@ class OSINTDetector:
 
         if debug:
             result["debug"] = {
+                "detection_mode": "spai_assisted",
                 "system_prompt": system_prompt,
                 "exif_data": metadata_dict,
-                "ela_variance": ela_variance,
-                "fft_pattern": fft_metrics['pattern_type'],
-                "fft_peaks": fft_metrics['peaks_detected'],
+                "spai_score": spai_result["spai_score"],
+                "spai_prediction": spai_result["spai_prediction"],
+                "spai_tier": spai_result["tier"],
                 "context_applied": self.context,
                 "threshold_adjustments": self._get_threshold_adjustments(),
                 "request_1_latency": req1_time,
@@ -265,6 +376,36 @@ class OSINTDetector:
 
         return result
 
+    def _extract_metadata_simple(self, image_bytes: bytes) -> Dict[str, str]:
+        """
+        Extract EXIF metadata from image bytes.
+
+        Args:
+            image_bytes: Image data as bytes
+
+        Returns:
+            Dictionary of EXIF tag names to values (empty if none found)
+        """
+        try:
+            import exifread
+            import io
+
+            file_obj = io.BytesIO(image_bytes)
+            tags = exifread.process_file(file_obj, details=False)
+
+            # Convert to simple string dict
+            metadata_dict = {}
+            for tag_name, tag_value in tags.items():
+                # Skip thumbnail data
+                if 'thumbnail' in tag_name.lower():
+                    continue
+                metadata_dict[tag_name] = str(tag_value)
+
+            return metadata_dict
+        except Exception:
+            # If metadata extraction fails, return empty dict
+            return {}
+
     def _check_metadata(self, image_bytes: bytes) -> Tuple[Dict, str, bool]:
         """
         Extract EXIF metadata and check for AI tool signatures.
@@ -272,7 +413,7 @@ class OSINTDetector:
         Returns:
             (metadata_dict, metadata_report, auto_fail)
         """
-        metadata_dict = self.artifact_gen.extract_metadata(image_bytes)
+        metadata_dict = self._extract_metadata_simple(image_bytes)
 
         # Build metadata report
         report_lines = ["EXIF Metadata:"]
@@ -297,122 +438,58 @@ class OSINTDetector:
 
         return metadata_dict, "\n".join(report_lines), auto_fail
 
-    def _build_forensic_report(
-        self,
-        metadata_report: str,
-        ela_variance: float,
-        fft_metrics: Dict
-    ) -> str:
-        """Generate human-readable forensic report."""
-
-        # ELA interpretation
-        if ela_variance < 2.0:
-            ela_interp = "Low variance → Uniform compression (AI indicator)"
-        else:
-            ela_interp = "High variance → Inconsistent compression (manipulation indicator)"
-
-        report = f"""{metadata_report}
-
-ELA Analysis:
-  Variance Score: {ela_variance:.2f}
-  Threshold: <2.0 (AI indicator)
-  Interpretation: {ela_interp}
-
-FFT Analysis:
-  Pattern Type: {fft_metrics['pattern_type']}
-  Peaks Detected: {fft_metrics['peaks_detected']} above threshold
-  Peak Threshold: {fft_metrics['peak_threshold']:.0f}
-  Interpretation: {'Grid/Starfield/Cross = AI artifacts' if fft_metrics['pattern_type'] != 'Chaotic' else 'Chaotic = Natural frequencies'}
-
-OSINT Context: {self.context.capitalize()}
-"""
-
-        # Add context-specific adjustments if not auto
-        if self.context != "auto":
-            adjustments = self._get_threshold_adjustments()
-            if adjustments:
-                report += "\nContext-Adaptive Adjustments:\n"
-                for key, value in adjustments.items():
-                    report += f"  - {key}: {value}\n"
-
-        return report.strip()
-
-    def _two_stage_classification(
+    def _two_stage_classification_spai(
         self,
         original_bytes: bytes,
-        ela_bytes: bytes,
-        fft_bytes: bytes,
-        forensic_report: str,
-        system_prompt: str,
-        send_forensics: bool = True
+        heatmap_bytes: bytes,
+        spai_report: str,
+        system_prompt: str
     ) -> Tuple[str, Dict, float, float, int, int]:
         """
-        Perform two-stage API calls for analysis + verdict.
+        Perform two-stage API calls with SPAI spectral analysis context.
 
         Args:
             original_bytes: Original image bytes
-            ela_bytes: ELA artifact bytes
-            fft_bytes: FFT artifact bytes
-            forensic_report: Text forensic report
+            heatmap_bytes: SPAI blended attention heatmap bytes (60% original + 40% heatmap)
+            spai_report: SPAI spectral analysis report text
             system_prompt: System prompt for VLM
-            send_forensics: If True, include ELA/FFT images and forensic text in VLM prompt
 
         Returns:
             (analysis_text, verdict_result, req1_time, req2_time, req1_tokens, req2_tokens)
         """
         # Convert images to base64
         original_uri = f"data:image/png;base64,{base64.b64encode(original_bytes).decode()}"
+        heatmap_uri = f"data:image/png;base64,{base64.b64encode(heatmap_bytes).decode()}"
 
-        # Build user message content based on send_forensics flag
-        user_content = []
-
-        if send_forensics:
-            # Include forensic artifacts and detailed interpretation
-            ela_uri = f"data:image/png;base64,{base64.b64encode(ela_bytes).decode()}"
-            fft_uri = f"data:image/png;base64,{base64.b64encode(fft_bytes).decode()}"
-
-            user_content.extend([
-                {"type": "text", "text": "--- FORENSIC LAB REPORT ---"},
-                {"type": "text", "text": forensic_report},
-                {"type": "text", "text": "--- ORIGINAL IMAGE ---"},
-                {"type": "image_url", "image_url": {"url": original_uri}},
-                {"type": "text", "text": "--- ELA MAP ---"},
-                {"type": "image_url", "image_url": {"url": ela_uri}},
-                {"type": "text", "text": "--- FFT SPECTRUM ---"},
-                {"type": "image_url", "image_url": {"url": fft_uri}},
-                {
-                    "type": "text",
-                    "text": (
-                        f"{self.prompts['analysis_instructions']['forensic_instructions']}\n"
-                        "--- ANALYSIS INSTRUCTIONS ---\n"
-                        "This is the image to be analysed. Please follow the instructions below to analyze it in detail.\n\n"
-                        f"{self.prompts['analysis_instructions']['visual_analysis']}\n\n"
-                        "2. **Forensic Correlation**:\n"
-                        "   - Does the ELA show local inconsistencies suggesting manipulation?\n"
-                        "   - Does the FFT show bright grid stars indicating GAN synthesis?\n"
-                        "   - Apply the appropriate OSINT protocol for this scene type\n\n"
-                        f"{self.prompts['analysis_instructions']['metadata_instructions']}\n\n"
-                        f"4. **Watermark Analysis**: {self._get_watermark_instruction()}\n\n"
-                        "Provide your reasoning for whether this image is authentic or AI-generated."
-                    )
-                }
-            ])
-        else:
-            # Only send original image with simplified analysis instructions
-            user_content.extend([
-                {"type": "text", "text": "--- IMAGE TO ANALYZE ---"},
-                {"type": "image_url", "image_url": {"url": original_uri}},
-                {
-                    "type": "text",
-                    "text": (
-                        "--- ANALYSIS INSTRUCTIONS ---\n"
-                        "This is the image to be analysed. Please follow the instructions below to analyze it in detail.\n\n"
-                        f"{self.prompts['analysis_instructions']['visual_analysis']}\n\n"
-                        f"2. **Watermark Analysis**: {self._get_watermark_instruction()}\n\n"
-                        "Provide your reasoning for whether this image is authentic or AI-generated."
-                    )
-                }
-            ])
+        # Build user message content with SPAI context
+        user_content = [
+            {"type": "text", "text": "--- SPAI SPECTRAL ANALYSIS REPORT ---"},
+            {"type": "text", "text": spai_report},
+            {"type": "text", "text": "--- ORIGINAL IMAGE ---"},
+            {"type": "image_url", "image_url": {"url": original_uri}},
+            {"type": "text", "text": "--- SPAI ATTENTION HEATMAP OVERLAY ---"},
+            {"type": "text", "text": "This overlay shows SPAI's spectral attention (red=suspicious frequency patterns, blue=normal). "
+                                     "It is blended at 60% original + 40% heatmap for visual interpretation."},
+            {"type": "image_url", "image_url": {"url": heatmap_uri}},
+            {
+                "type": "text",
+                "text": (
+                    "--- ANALYSIS INSTRUCTIONS ---\n"
+                    "Analyze this image using the SPAI spectral analysis as context.\n\n"
+                    f"{self.prompts['analysis_instructions']['visual_analysis']}\n\n"
+                    "2. **SPAI Spectral Correlation**:\n"
+                    "   - Review the SPAI analysis report and attention heatmap\n"
+                    "   - SPAI uses Vision Transformer frequency-domain analysis (CVPR2025)\n"
+                    "   - Red regions in heatmap indicate suspicious spectral patterns\n"
+                    "   - Blue regions indicate normal frequency distributions\n"
+                    "   - Consider SPAI's confidence score but make your independent assessment\n"
+                    "   - Apply the appropriate OSINT protocol for this scene type\n\n"
+                    f"{self.prompts['analysis_instructions']['metadata_instructions']}\n\n"
+                    f"4. **Watermark Analysis**: {self._get_watermark_instruction()}\n\n"
+                    "Provide your comprehensive reasoning for whether this image is authentic or AI-generated."
+                )
+            }
+        ]
 
         # Request 1: Analysis
         messages = [
@@ -436,7 +513,7 @@ OSINT Context: {self.context.capitalize()}
             analysis_text = response_1.choices[0].message.content
 
             # Estimate tokens (rough approximation: 1 token ≈ 4 chars for text, 765 per image)
-            req1_tokens = len(forensic_report) // 4 + 765 * 3 + 50  # 3 images + text overhead
+            req1_tokens = len(spai_report) // 4 + 765 * 2 + 50  # 2 images (original + heatmap) + text overhead
 
         except Exception as e:
             # Fallback on API error with descriptive message
@@ -498,39 +575,33 @@ Answer with ONLY the single letter A or B."""
 
         return analysis_text, verdict_result, req1_time, req2_time, req1_tokens, req2_tokens
 
-    def _get_system_prompt(self, include_forensic_context: bool = True) -> str:
+    def _get_system_prompt_spai(self) -> str:
         """
-        Generate context-adaptive OSINT system prompt.
+        Generate SPAI-aware OSINT system prompt.
 
-        Args:
-            include_forensic_context: If True, include forensic-specific protocols (ELA/FFT).
-                                     If False, use generic visual analysis role.
+        Replaces forensic protocols (ELA/FFT) with SPAI spectral analysis context.
         """
-        if not include_forensic_context:
-            # Simplified prompt when forensics are disabled
-            return self.prompts['system_prompts']['simplified']
+        # Base prompt adapted for SPAI
+        base = """You are an expert OSINT analyst specializing in detecting AI-generated imagery using SPAI spectral analysis.
 
-        # Full forensic-aware prompt when forensics are enabled
-        base = self.prompts['system_prompts']['base']
+SPAI (Spectral AI-Generated Image Detector) uses Vision Transformer frequency-domain learning to detect AI-generated content by analyzing spectral distributions. You will receive SPAI's analysis and attention heatmaps as context."""
 
-        # Get forensic protocols from YAML
-        case_a = self.prompts['system_prompts']['forensic_protocols']['case_a']
-        case_b = self.prompts['system_prompts']['forensic_protocols']['case_b']
-        case_c = self.prompts['system_prompts']['forensic_protocols']['case_c']
-
+        # Get OSINT protocols (adapt from YAML but replace forensic mentions with SPAI)
         if self.context == "auto":
-            protocols = f"{case_a}\n{case_b}\n{case_c}"
+            protocols = """Apply the appropriate protocol based on image content:
+- Military scenes: Consider tactical formations, uniform consistency, equipment realism
+- Disaster scenes: Assess chaos realism, damage patterns, environmental consistency
+- Propaganda scenes: Evaluate professional production, staging, post-processing indicators"""
         elif self.context == "military":
-            protocols = case_a
+            protocols = "Focus on military imagery: tactical formations, uniform details, equipment authenticity"
         elif self.context == "disaster":
-            protocols = case_b
+            protocols = "Focus on disaster imagery: damage realism, environmental consistency, chaos patterns"
         elif self.context == "propaganda":
-            protocols = case_c
+            protocols = "Focus on propaganda imagery: professional staging, post-processing, message framing"
         else:
-            # Default to auto if unknown context
-            protocols = f"{case_a}\n{case_b}\n{case_c}"
+            protocols = "Apply general OSINT analysis principles"
 
-        return f"{base}\n{protocols}"
+        return f"{base}\n\n{protocols}"
 
     def _parse_verdict(self, response) -> Dict:
         """
@@ -609,17 +680,17 @@ Answer with ONLY the single letter A or B."""
             return self.prompts['watermark_instructions']['ignore']
 
     def _get_threshold_adjustments(self) -> Dict[str, str]:
-        """Get context-specific threshold adjustments for debug display."""
+        """Get context-specific analysis adjustments for debug display."""
         adjustments = {}
 
         if self.context == "military":
-            adjustments["FFT Peak Threshold"] = "+20% (24 instead of 20)"
-            adjustments["Grid Artifacts"] = "Ignored (formations expected)"
+            adjustments["Formation Patterns"] = "Regular grid patterns expected (not flagged as AI)"
+            adjustments["Uniform Consistency"] = "High visual similarity expected"
         elif self.context == "disaster":
-            adjustments["High-Entropy Noise"] = "Ignored (chaos expected)"
-            adjustments["Messy Textures"] = "NOT flagged as suspicious"
+            adjustments["Spectral Noise"] = "High-entropy chaos expected (not flagged)"
+            adjustments["Damage Textures"] = "Irregular patterns are normal"
         elif self.context == "propaganda":
-            adjustments["ELA Contrast"] = "High values expected (post-processing)"
-            adjustments["Beautification Filter"] = "Distinguished from generation"
+            adjustments["Post-Processing"] = "Professional editing expected (not flagged as AI)"
+            adjustments["Studio Lighting"] = "Controlled environment indicators normal"
 
         return adjustments
