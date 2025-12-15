@@ -83,35 +83,32 @@ KV-Cache Hit: ✅ YES
 
 ## Solution Implemented
 
-### 1. Reduced Timeout from 180s to 60s
+### 1. ~~Reduced Timeout from 180s to 60s~~ REVERTED: Keep 180s Timeout
 
 **File:** [detector.py](detector.py#L67)
 
-**Before:**
-```python
-timeout=180.0,  # 3 minute default timeout for all requests
-```
-
-**After:**
+**Initial Change (Reverted):**
 ```python
 timeout=60.0,  # 1 minute timeout for faster failure in production
 ```
 
-**Rationale:**
-- 180 seconds (3 minutes) is too long for production use
-- Stage 2 taking 119-133 seconds suggests either:
-  - Model/hardware issue (needs investigation)
-  - Prompt too complex (needs optimization)
-- Reducing to 60 seconds will:
-  - Fail faster for debugging
-  - Prevent users from waiting 3 minutes for timeout
-  - Force investigation of root cause instead of masking with high timeout
+**Current Setting:**
+```python
+timeout=180.0,  # 3 minute timeout to accommodate slower VLM inference
+```
 
-**Trade-off:**
-- ✅ Faster failure detection
-- ✅ Better user experience (fail at 60s instead of 180s)
-- ⚠️ May timeout on slower hardware
-- ⚠️ May require prompt optimization if 60s is still too long
+**Rationale for Revert:**
+- User feedback: "60s appears to be too short"
+- Stage 2 legitimately takes 119-133 seconds with full forensic analysis
+- 60s timeout would cause false failures on valid requests
+- Better to accommodate slower inference than timeout prematurely
+
+**Alternative Solutions:**
+- ✅ **Forensic Toggle (Implemented):** User can disable forensics to reduce latency
+  - With forensics: ~119s (under 180s timeout)
+  - Without forensics: ~80-95s estimated (well under 180s timeout)
+- ⏳ **Prompt Optimization (Future):** Reduce verbosity of forensic instructions
+- ⏳ **Hardware Upgrade (Future):** Better GPU or model quantization
 
 ---
 
