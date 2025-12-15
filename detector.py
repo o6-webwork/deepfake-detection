@@ -8,6 +8,8 @@ using a hybrid "Cyborg" architecture that combines signal processing with semant
 import math
 import time
 import base64
+import yaml
+from pathlib import Path
 from typing import Dict, Tuple, List, Optional
 from openai import OpenAI
 from forensics import ArtifactGenerator
@@ -44,6 +46,16 @@ class OSINTDetector:
         'nightcafe', 'artbreeder', 'starryai'
     ]
 
+    @classmethod
+    def _load_prompts(cls, prompts_path: str = "prompts.yaml") -> dict:
+        """Load prompt templates from YAML configuration file."""
+        yaml_path = Path(prompts_path)
+        if not yaml_path.exists():
+            raise FileNotFoundError(f"Prompts file not found: {prompts_path}")
+
+        with open(yaml_path, 'r', encoding='utf-8') as f:
+            return yaml.safe_load(f)
+
     def __init__(
         self,
         base_url: str,
@@ -51,7 +63,8 @@ class OSINTDetector:
         api_key: str = "dummy",
         context: str = "auto",
         watermark_mode: str = "ignore",
-        provider: str = "vllm"
+        provider: str = "vllm",
+        prompts_path: str = "prompts.yaml"
     ):
         """
         Initialize OSINT detector.
@@ -63,12 +76,16 @@ class OSINTDetector:
             context: "auto", "military", "disaster", or "propaganda"
             watermark_mode: "ignore" (treat as news logos) or "analyze" (flag AI watermarks)
             provider: "vllm", "openai", "anthropic", or "gemini"
+            prompts_path: Path to YAML prompts configuration file
         """
         self.model_name = model_name
         self.context = context
         self.watermark_mode = watermark_mode
         self.provider = provider
         self.artifact_gen = ArtifactGenerator()
+
+        # Load prompts from YAML
+        self.prompts = self._load_prompts(prompts_path)
 
         # Initialize client based on provider
         if provider in ["vllm", "openai"]:
@@ -366,31 +383,15 @@ OSINT Context: {self.context.capitalize()}
                 {
                     "type": "text",
                     "text": (
-                        "--- FORENSIC INTERPRETATION GUIDE ---\n"
-                        "FFT Pattern Types:\n"
-                        "- 'Natural/Chaotic (High Entropy)' = Real photo with grain/noise (>2000 peaks at 5-sigma)\n"
-                        "- 'High Freq Artifacts (Suspected AI)' = Sparse bright GAN grid stars (20-2000 peaks)\n"
-                        "- 'Natural/Clean' = Clean authentic image (<20 peaks)\n\n"
-                        "ELA Variance:\n"
-                        "- Low variance (<2.0) is INCONCLUSIVE on social media (WhatsApp/Facebook re-compression)\n"
-                        "- Real WhatsApp photos often have variance ~0.5\n"
-                        "- Focus on LOCAL inconsistencies (bright patch on dark), NOT global uniformity\n\n"
-                        "FFT Black Cross: You may see a BLACK cross (+) in the center - this is a masking "
-                        "artifact to remove social media border noise. IGNORE IT.\n\n"
+                        f"{self.prompts['analysis_instructions']['forensic_instructions']}\n"
                         "--- ANALYSIS INSTRUCTIONS ---\n"
-                        "Perform a comprehensive analysis:\n\n"
-                        "1. **Physical/Visual Analysis** (PRIMARY - Analyze the ORIGINAL IMAGE):\n"
-                        "   - Anatomy: Check for extra/missing fingers, wrong proportions, facial anomalies\n"
-                        "   - Physics: Impossible shadows, lighting inconsistencies, gravity violations\n"
-                        "   - Composition: Text rendering errors, blurry backgrounds, object coherence\n"
-                        "   - Textures: Unnatural smoothness (plastic skin), repetitive patterns\n\n"
+                        "This is the image to be analysed. Please follow the instructions below to analyze it in detail.\n\n"
+                        f"{self.prompts['analysis_instructions']['visual_analysis']}\n\n"
                         "2. **Forensic Correlation**:\n"
                         "   - Does the ELA show local inconsistencies suggesting manipulation?\n"
                         "   - Does the FFT show bright grid stars indicating GAN synthesis?\n"
                         "   - Apply the appropriate OSINT protocol for this scene type\n\n"
-                        "3. **Metadata Check**:\n"
-                        "   - Any AI tool signatures detected?\n"
-                        "   - Professional camera vs smartphone vs no metadata?\n\n"
+                        f"{self.prompts['analysis_instructions']['metadata_instructions']}\n\n"
                         f"4. **Watermark Analysis**: {self._get_watermark_instruction()}\n\n"
                         "Provide your reasoning for whether this image is authentic or AI-generated."
                     )
@@ -405,17 +406,9 @@ OSINT Context: {self.context.capitalize()}
                     "type": "text",
                     "text": (
                         "--- ANALYSIS INSTRUCTIONS ---\n"
-                        "Perform a comprehensive visual analysis of this image:\n\n"
-                        "1. **Physical/Visual Analysis**:\n"
-                        "   - Anatomy: Check for extra/missing fingers, wrong proportions, facial anomalies\n"
-                        "   - Physics: Impossible shadows, lighting inconsistencies, gravity violations\n"
-                        "   - Composition: Text rendering errors, blurry backgrounds, object coherence\n"
-                        "   - Textures: Unnatural smoothness (plastic skin), repetitive patterns\n\n"
-                        "2. **Scene Coherence**:\n"
-                        "   - Do objects interact naturally with their environment?\n"
-                        "   - Are perspective and scale consistent?\n"
-                        "   - Are there any visual artifacts or anomalies?\n\n"
-                        f"3. **Watermark Analysis**: {self._get_watermark_instruction()}\n\n"
+                        "This is the image to be analysed. Please follow the instructions below to analyze it in detail.\n\n"
+                        f"{self.prompts['analysis_instructions']['visual_analysis']}\n\n"
+                        f"2. **Watermark Analysis**: {self._get_watermark_instruction()}\n\n"
                         "Provide your reasoning for whether this image is authentic or AI-generated."
                     )
                 }
@@ -436,7 +429,7 @@ OSINT Context: {self.context.capitalize()}
                 model=self.model_name,
                 messages=messages,
                 temperature=0.0,
-                max_tokens=1000  # Increased from 500 to allow for comprehensive analysis
+                max_tokens=2000  # Extended to accommodate detailed analysis requirements
             )
             req1_time = time.time() - req1_start
 
@@ -515,33 +508,15 @@ Answer with ONLY the single letter A or B."""
         """
         if not include_forensic_context:
             # Simplified prompt when forensics are disabled
-            return """You are a Senior OSINT Image Analyst specializing in military, disaster, and propaganda imagery verification.
-Focus on visual anomalies, physical inconsistencies, and composition errors to assess authenticity."""
+            return self.prompts['system_prompts']['simplified']
 
         # Full forensic-aware prompt when forensics are enabled
-        base = """You are a Senior OSINT Image Analyst specializing in military, disaster, and propaganda imagery verification."""
+        base = self.prompts['system_prompts']['base']
 
-        case_a = """
-CASE A: Uniforms / Parades / Formations (Military Context)
-- Filter: IGNORE MACRO-scale repetitive patterns (e.g., lines of soldiers, rows of tanks, windows on buildings) visible in the original image.
-  * These are organic, imperfect alignments at LOW frequency
-- Focus: Strictly FLAG MICRO-scale, perfect pixel-grid anomalies or symmetric 'star patterns' in the FFT noise floor.
-  * These indicate GAN synthesis, NOT formation marching
-  * These are pixel-perfect, HIGH frequency artifacts (often visible in sky/background)
-- Also check: Clone stamp errors (duplicate faces, floating weapons).
-- Threshold: FFT peak threshold increased by +20%."""
-
-        case_b = """
-CASE B: Disaster/HADR Context (Flood/Rubble/Combat)
-- Filter: IGNORE high-entropy noise (chaos is expected).
-- Focus: Look for physics failures (liquid fire, smoke without shadows).
-- Do NOT flag "messy" textures as suspicious."""
-
-        case_c = """
-CASE C: Propaganda/Showcase Context (Studio/News)
-- Filter: Expect high ELA contrast (post-processing is normal).
-- Focus: Distinguish "beautification" from "generation" artifacts.
-- Check metadata for professional camera signatures."""
+        # Get forensic protocols from YAML
+        case_a = self.prompts['system_prompts']['forensic_protocols']['case_a']
+        case_b = self.prompts['system_prompts']['forensic_protocols']['case_b']
+        case_c = self.prompts['system_prompts']['forensic_protocols']['case_c']
 
         if self.context == "auto":
             protocols = f"{case_a}\n{case_b}\n{case_c}"
@@ -629,18 +604,9 @@ CASE C: Propaganda/Showcase Context (Studio/News)
     def _get_watermark_instruction(self) -> str:
         """Get watermark analysis instruction based on mode."""
         if self.watermark_mode == "analyze":
-            return (
-                "Actively scan for known AI watermarks (e.g., 'Sora', 'NanoBanana', "
-                "colored strips, AI tool logos). If found, flag as 'Suspected AI Watermark'. "
-                "CAUTION: Distinguish these from standard news/TV watermarks (CNN, BBC, Reuters)."
-            )
+            return self.prompts['watermark_instructions']['analyze']
         else:  # ignore mode (default)
-            return (
-                "**DO NOT** analyze, mention, or consider any watermarks, text overlays, corner logos, "
-                "timestamps, or channel branding in your reasoning. These are OSINT source attributions "
-                "(news agencies, TV stations) and are **completely irrelevant** to authenticity assessment. "
-                "Focus ONLY on the visual content itself."
-            )
+            return self.prompts['watermark_instructions']['ignore']
 
     def _get_threshold_adjustments(self) -> Dict[str, str]:
         """Get context-specific threshold adjustments for debug display."""
