@@ -470,13 +470,15 @@ Enable Debug Mode to see detailed SPAI scores.
 
                 # Format mode description
                 if detection_mode == "spai_standalone":
-                    # SPAI standalone mode - show only SPAI results
+                    # SPAI standalone mode - show only SPAI results with clear prediction
+                    spai_prediction = "AI-Generated" if p_fake >= 0.5 else "Real"
+
                     assistant_msg = f"""**Detection Mode:** SPAI Standalone (Spectral Analysis Only)
 
-**{tier_emoji} Classification: {tier}**
-**AI Generated Probability:** {p_fake_pct:.1f}%
+**{tier_emoji} SPAI Prediction: {spai_prediction}**
+**Confidence:** {p_fake_pct:.1f}%
 
-**SPAI Spectral Analysis:**
+**Spectral Analysis:**
 {reasoning}
 
 💡 *View SPAI attention heatmap in the dropdown below the image*
