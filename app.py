@@ -252,24 +252,42 @@ with tab1:
                 with st.expander("🔬 View SPAI Attention Heatmap", expanded=False):
                     st.markdown("### SPAI Spectral Analysis Overlay")
 
-                    # Get heatmap from result if in debug mode
+                    # Get heatmap from result
                     result = st.session_state.osint_result
-                    if result and 'debug' in result:
-                        debug = result['debug']
-                        spai_score = debug.get('spai_score', 0)
-                        spai_pred = debug.get('spai_prediction', 'Unknown')
+                    if result and result.get('spai_heatmap_bytes'):
+                        # Display the actual heatmap image
+                        st.image(result['spai_heatmap_bytes'], use_container_width=True,
+                                caption="SPAI Attention Heatmap (Blended Overlay)")
 
-                        st.markdown(f"""
+                        # Get SPAI scores if in debug mode
+                        if 'debug' in result:
+                            debug = result['debug']
+                            spai_score = debug.get('spai_score', 0)
+                            spai_pred = debug.get('spai_prediction', 'Unknown')
+
+                            st.markdown(f"""
 **SPAI Analysis:** {spai_pred} (Score: {spai_score:.3f})
 
-The heatmap overlay was sent to the VLM as part of the spectral analysis context.
-Red/warm regions indicate suspicious frequency patterns detected by SPAI's Vision Transformer.
-Blue/cool regions show normal spectral distributions.
+**Heatmap Interpretation:**
+- **Warm colors (Red/Orange/Yellow)**: Higher degree of AI manipulation detected
+- **Dark Red**: Highest confidence of AI-generated artifacts
+- **Cool colors (Blue/Purple)**: Normal spectral distributions (likely authentic)
 
-*Note: The blended overlay (60% original + 40% heatmap) is embedded in the VLM analysis above.*
-                        """)
+The blended overlay (60% original + 40% heatmap) shows regions where SPAI's Vision Transformer
+detected frequency-domain anomalies characteristic of AI generation. This heatmap was provided
+to the VLM as visual context for comprehensive analysis.
+                            """)
+                        else:
+                            st.markdown("""
+**Heatmap Interpretation:**
+- **Warm colors (Red/Orange/Yellow)**: Higher degree of AI manipulation detected
+- **Dark Red**: Highest confidence of AI-generated artifacts
+- **Cool colors (Blue/Purple)**: Normal spectral distributions (likely authentic)
+
+Enable Debug Mode to see detailed SPAI scores.
+                            """)
                     else:
-                        st.info("SPAI heatmap is generated during analysis and provided to the VLM. Enable Debug Mode to see SPAI scores.")
+                        st.info("SPAI heatmap is generated during analysis and provided to the VLM.")
 
                     # Show detailed OSINT result if available
                     if st.session_state.osint_result is not None:
@@ -556,7 +574,7 @@ with tab2:
     gt_file = st.file_uploader("Upload ground truth CSV", type=["csv"])
 
     # Evaluation settings
-    col1, col2, col3 = st.columns(3)
+    col1, col2, col3, col4 = st.columns(4)
 
     with col1:
         eval_context = st.selectbox(
@@ -581,6 +599,14 @@ with tab2:
             options=["ignore", "analyze"],
             index=0,
             help="How to handle watermarks/logos"
+        )
+
+    with col4:
+        eval_spai_resolution = st.select_slider(
+            "SPAI Resolution",
+            options=[512, 768, 1024, 1280, 1536, 2048, "Original"],
+            value=1280,
+            help="Maximum resolution for SPAI analysis (higher = more accurate but slower)"
         )
 
     # Choose which models to evaluate (default: all)
@@ -630,7 +656,7 @@ with tab2:
                         context=eval_context,
                         watermark_mode=watermark_mode,
                         detection_mode=eval_detection_mode,
-                        spai_max_size=1280,  # Default resolution for batch evaluation
+                        spai_max_size=eval_spai_resolution if eval_spai_resolution != "Original" else None,
                         spai_overlay_alpha=0.6  # Default transparency
                     )
 
@@ -732,10 +758,39 @@ with tab2:
                 ]
             )
 
-            # Excel export: metrics + predictions in 2 sheets
+            # Excel export: config + metrics + predictions in 3 sheets
             excel_buf = io.BytesIO()
             with pd.ExcelWriter(excel_buf, engine="xlsxwriter") as writer:
+                # Sheet 1: Evaluation configuration parameters
+                config_data = {
+                    "Parameter": [
+                        "Detection Mode",
+                        "OSINT Context",
+                        "Watermark Mode",
+                        "SPAI Resolution",
+                        "SPAI Overlay Alpha",
+                        "Timestamp",
+                        "Total Images",
+                        "Models Evaluated"
+                    ],
+                    "Value": [
+                        eval_detection_mode,
+                        eval_context,
+                        watermark_mode,
+                        str(eval_spai_resolution),
+                        "0.6 (60% original + 40% heatmap)",
+                        datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
+                        len(eval_images),
+                        ", ".join([MODEL_CONFIGS[k]["display_name"] for k in models_to_run])
+                    ]
+                }
+                config_df = pd.DataFrame(config_data)
+                config_df.to_excel(writer, sheet_name="config", index=False)
+
+                # Sheet 2: Metrics
                 metrics_df.to_excel(writer, sheet_name="metrics", index=False)
+
+                # Sheet 3: Predictions
                 preds_df.to_excel(writer, sheet_name="predictions", index=False)
             excel_buf.seek(0)
 

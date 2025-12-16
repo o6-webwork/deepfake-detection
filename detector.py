@@ -356,6 +356,7 @@ OSINT Context: {self.context.capitalize()}
             "confidence": verdict_result["confidence"],
             "reasoning": analysis,
             "spai_report": spai_report,
+            "spai_heatmap_bytes": spai_result["heatmap_bytes"],  # Store heatmap for UI display
             "metadata_auto_fail": False,
             "raw_logits": verdict_result["raw_logits"],
             "verdict_token": verdict_result["token"]
@@ -476,8 +477,9 @@ OSINT Context: {self.context.capitalize()}
             {"type": "text", "text": "--- ORIGINAL IMAGE ---"},
             {"type": "image_url", "image_url": {"url": original_uri}},
             {"type": "text", "text": "--- SPAI ATTENTION HEATMAP OVERLAY ---"},
-            {"type": "text", "text": "This overlay shows SPAI's spectral attention (red=suspicious frequency patterns, blue=normal). "
-                                     "It is blended at 60% original + 40% heatmap for visual interpretation."},
+            {"type": "text", "text": "This overlay shows SPAI's spectral attention map blended onto the original image (60% original + 40% heatmap). "
+                                     "WARM COLORS (red/orange/yellow) indicate HIGHER DEGREE of AI manipulation, with DARK RED showing HIGHEST CONFIDENCE of AI-generated artifacts. "
+                                     "COOL COLORS (light blue to dark blue) indicate LOWEST CONFIDENCE of AI manipulation (likely authentic regions)."},
             {"type": "image_url", "image_url": {"url": heatmap_uri}},
             {
                 "type": "text",
@@ -489,8 +491,9 @@ OSINT Context: {self.context.capitalize()}
                     "2. **SPAI Spectral Correlation**:\n"
                     "   - Review the SPAI analysis report and attention heatmap overlay\n"
                     "   - Use SPAI's frequency-domain insights alongside your visual analysis\n"
-                    "   - Red regions in the heatmap highlight spectral anomalies\n"
-                    "   - Blue regions show normal spectral distributions\n"
+                    "   - WARM COLORS (red/orange/yellow) indicate higher AI manipulation confidence, with dark red = highest\n"
+                    "   - COOL COLORS (light to dark blue) indicate lower AI manipulation confidence (likely authentic)\n"
+                    "   - Pay special attention to warm-colored regions when checking for visual artifacts\n"
                     "   - Apply the appropriate OSINT protocol for this scene type\n\n"
                     f"{self.prompts['analysis_instructions']['metadata_instructions']}\n\n"
                     f"4. **Watermark Analysis**: {self._get_watermark_instruction()}\n\n"
