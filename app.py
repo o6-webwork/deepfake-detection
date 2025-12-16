@@ -749,10 +749,16 @@ with tab2:
 
                     correct = predicted_label == actual
 
+                    # Set model name appropriately for SPAI standalone vs assisted
+                    if eval_detection_mode == "spai_standalone":
+                        display_name = "SPAI Standalone (Spectral Analysis)"
+                    else:
+                        display_name = model_display
+
                     per_image_results.append(
                         {
                             "model_key": model_key,
-                            "model_name": model_display,
+                            "model_name": display_name,
                             "filename": filename,
                             "actual_label": actual,
                             "predicted_label": predicted_label,
