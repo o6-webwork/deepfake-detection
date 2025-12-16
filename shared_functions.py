@@ -59,7 +59,8 @@ def analyze_single_image(
     watermark_mode: str = "ignore",
     detection_mode: str = "spai_assisted",
     spai_max_size: int = 1280,
-    spai_overlay_alpha: float = 0.6
+    spai_overlay_alpha: float = 0.6,
+    spai_detector=None
 ) -> Dict:
     """
     Analyze a single image using the OSINT deepfake detector with SPAI.
@@ -72,6 +73,7 @@ def analyze_single_image(
         detection_mode: "spai_standalone" or "spai_assisted"
         spai_max_size: Maximum resolution for SPAI analysis (512-2048 or None)
         spai_overlay_alpha: Transparency for heatmap blending (0.0-1.0)
+        spai_detector: Pre-loaded SPAIDetector instance (for caching)
 
     Returns:
         {
@@ -96,6 +98,7 @@ def analyze_single_image(
         watermark_mode=watermark_mode,
         provider=model_config.get('provider', 'vllm'),
         detection_mode=detection_mode,
+        spai_detector=spai_detector,  # Pass cached SPAI detector
         spai_max_size=spai_max_size,
         spai_overlay_alpha=spai_overlay_alpha
     )

@@ -19,8 +19,27 @@ from shared_functions import (
 from config import PROMPTS, SYSTEM_PROMPT, MODEL_CONFIGS
 from classifier import create_classifier_from_config
 from detector import OSINTDetector
+from spai_detector import SPAIDetector
 
 st.set_page_config(page_title="Deepfake Detector", layout="wide", page_icon="🕵️‍♂️")
+
+# Cache SPAI model to avoid reloading on every inference (2GB+ model)
+@st.cache_resource
+def load_spai_detector():
+    """
+    Load and cache SPAI model (runs once per session).
+
+    This is critical for performance - the SPAI model is 2GB+ and takes
+    ~2 minutes to load from disk. Without caching, every analysis would
+    reload the model.
+
+    Returns:
+        SPAIDetector instance (cached)
+    """
+    return SPAIDetector(
+        config_path="spai/configs/spai.yaml",
+        weights_path="spai/weights/spai.pth"
+    )
 
 # session state
 if "messages" not in st.session_state:
@@ -400,7 +419,10 @@ Enable Debug Mode to see detailed SPAI scores.
                 analysis_image.save(img_bytes, format='PNG')
                 img_bytes = img_bytes.getvalue()
 
-                # Create OSINT detector with SPAI integration
+                # Load cached SPAI detector (runs once per session)
+                spai_detector = load_spai_detector()
+
+                # Create OSINT detector with pre-loaded SPAI
                 config = MODEL_CONFIGS[detect_model_key]
                 detector = OSINTDetector(
                     base_url=config.get("base_url", ""),
@@ -410,6 +432,7 @@ Enable Debug Mode to see detailed SPAI scores.
                     watermark_mode=watermark_mode,
                     provider=config.get("provider", "vllm"),
                     detection_mode=detection_mode,
+                    spai_detector=spai_detector,  # Pass cached SPAI detector
                     spai_max_size=spai_resolution if spai_resolution != "Original" else None,
                     spai_overlay_alpha=spai_overlay_alpha
                 )
@@ -661,6 +684,9 @@ with tab2:
             # Optimize ground truth lookup by converting to set (O(1) instead of O(N))
             gt_filenames = set(gt_df["filename"].values)
 
+            # Load cached SPAI detector ONCE for the entire evaluation
+            spai_detector = load_spai_detector()
+
             per_model_results = {}  # model_key -> list[per image dicts]
             per_model_metrics = []  # list of metrics dicts with model info
 
@@ -686,7 +712,7 @@ with tab2:
                         gt_df["filename"] == filename, "label"
                     ].values[0]
 
-                    # Run detection once per image with SPAI
+                    # Run detection once per image with cached SPAI detector
                     res = analyze_single_image(
                         image=img,
                         model_config=model_config,
@@ -694,7 +720,8 @@ with tab2:
                         watermark_mode=watermark_mode,
                         detection_mode=eval_detection_mode,
                         spai_max_size=eval_spai_resolution if eval_spai_resolution != "Original" else None,
-                        spai_overlay_alpha=0.6  # Default transparency
+                        spai_overlay_alpha=0.6,  # Default transparency
+                        spai_detector=spai_detector  # Use cached SPAI detector
                     )
 
                     # Extract results

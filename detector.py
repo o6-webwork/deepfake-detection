@@ -74,6 +74,7 @@ class OSINTDetector:
         provider: str = "vllm",
         prompts_path: str = "prompts.yaml",
         detection_mode: str = "spai_assisted",
+        spai_detector: Optional['SPAIDetector'] = None,
         spai_config_path: str = "spai/configs/spai.yaml",
         spai_weights_path: str = "spai/weights/spai.pth",
         spai_max_size: int = 1280,
@@ -91,8 +92,9 @@ class OSINTDetector:
             provider: "vllm", "openai", "anthropic", or "gemini"
             prompts_path: Path to YAML prompts configuration file
             detection_mode: "spai_standalone" (SPAI only) or "spai_assisted" (SPAI + VLM)
-            spai_config_path: Path to SPAI config YAML
-            spai_weights_path: Path to SPAI pre-trained weights
+            spai_detector: Pre-loaded SPAIDetector instance (for caching). If None, creates new instance.
+            spai_config_path: Path to SPAI config YAML (only used if spai_detector is None)
+            spai_weights_path: Path to SPAI pre-trained weights (only used if spai_detector is None)
             spai_max_size: Maximum resolution for SPAI analysis (512-2048 or None for original)
             spai_overlay_alpha: Transparency for heatmap blending (0.0-1.0, default 0.6)
         """
@@ -104,11 +106,15 @@ class OSINTDetector:
         self.spai_max_size = spai_max_size if spai_max_size != "Original" else None
         self.spai_overlay_alpha = spai_overlay_alpha
 
-        # Initialize SPAI detector
-        self.spai = SPAIDetector(
-            config_path=spai_config_path,
-            weights_path=spai_weights_path
-        )
+        # Use pre-loaded SPAI detector if provided, otherwise create new one
+        if spai_detector is not None:
+            self.spai = spai_detector
+        else:
+            # Fallback: load SPAI detector (slow - 2+ minutes)
+            self.spai = SPAIDetector(
+                config_path=spai_config_path,
+                weights_path=spai_weights_path
+            )
 
         # Load prompts from YAML
         self.prompts = self._load_prompts(prompts_path)
