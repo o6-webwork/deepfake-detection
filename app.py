@@ -449,10 +449,6 @@ Enable Debug Mode to see detailed SPAI scores.
                 # Store result
                 st.session_state.osint_result = result
 
-                # Show timing in UI (temporary for debugging)
-                if result.get('timing'):
-                    st.success(f"⏱️ Detection completed in {detection_time:.2f}s (SPAI: {result['timing']['total']:.2f}s on {result['timing']['device']})")
-
                 # Store SPAI heatmap for display (always generated now)
                 st.session_state.forensic_artifacts = None  # Clear old forensics
                 if result.get('spai_heatmap_bytes'):
@@ -515,6 +511,13 @@ Enable Debug Mode to see detailed SPAI scores.
 ### 🔬 Debug: SPAI Spectral Analysis (Raw Data)
 
 **Detection Mode:** {debug.get('detection_mode', 'Unknown')}
+
+**⏱️ Performance Timing:**
+- Total Detection Time: {detection_time:.2f}s
+- SPAI Analysis Time: {result.get('timing', {}).get('total', 0):.2f}s
+- SPAI Device: {result.get('timing', {}).get('device', 'Unknown')}
+{f"- VLM Request 1: {debug.get('request_1_latency', 0):.2f}s" if detection_mode == "spai_assisted" else ""}
+{f"- VLM Request 2: {debug.get('request_2_latency', 0):.2f}s" if detection_mode == "spai_assisted" else ""}
 
 **EXIF Metadata:**
 ```
