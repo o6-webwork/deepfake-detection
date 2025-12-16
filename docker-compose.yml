@@ -38,10 +38,10 @@ services:
         reservations:
           cpus: '2.0'
           memory: 4G
-    # Uncomment for GPU support (requires nvidia-docker2)
-    # runtime: nvidia
-    # environment:
-    #   - NVIDIA_VISIBLE_DEVICES=0
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
 
   # =============================================================================
   # vLLM Server (OPTIONAL - for self-contained deployment)
