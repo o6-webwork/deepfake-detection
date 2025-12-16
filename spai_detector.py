@@ -86,7 +86,14 @@ class SPAIDetector:
             device = "cuda" if torch.cuda.is_available() else "cpu"
         self.device = torch.device(device)
 
-        logger.info(f"Initializing SPAI on device: {self.device}")
+        # Show device info prominently
+        if self.device.type == "cuda":
+            gpu_name = torch.cuda.get_device_name(0)
+            logger.info(f"🚀 SPAI using GPU: {gpu_name}")
+            print(f"🚀 SPAI using GPU: {gpu_name}")  # Also print for visibility
+        else:
+            logger.warning(f"⚠️ SPAI using CPU (SLOW) - CUDA not available")
+            print(f"⚠️ SPAI using CPU (SLOW) - CUDA not available")
 
         # Load config
         try:
@@ -170,6 +177,10 @@ class SPAIDetector:
 
         # Rebuild transform with updated config
         transform = build_transform(is_train=False, config=config)
+
+        # Clear CUDA cache if using GPU (improves performance)
+        if self.device.type == "cuda":
+            torch.cuda.empty_cache()
 
         # Load image
         try:
