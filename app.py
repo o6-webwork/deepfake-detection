@@ -105,47 +105,7 @@ with tab1:
             if st.button("🔄 Reload Models"):
                 st.rerun()
 
-    # model selector for detection
-    detect_model_display = st.selectbox(
-        "Select detection model",
-        list(display_to_model_key.keys()),
-        index=0,
-    )
-    detect_model_key = display_to_model_key[detect_model_display]
-
-    # OSINT Context Selector
-    osint_context = st.selectbox(
-        "OSINT Context",
-        options=["auto", "military", "disaster", "propaganda"],
-        format_func=lambda x: {
-            "auto": "Auto-Detect",
-            "military": "Military (Uniforms/Parades/Formations)",
-            "disaster": "Disaster/HADR (Flood/Rubble/Combat)",
-            "propaganda": "Propaganda/Showcase (Studio/News)"
-        }[x],
-        index=0,
-        help="Select scene type for context-adaptive forensic thresholds"
-    )
-    st.session_state.osint_context = osint_context
-
-    # Debug Mode Toggle
-    debug_mode = st.checkbox(
-        "🔍 Enable Debug Mode",
-        value=st.session_state.debug_mode,
-        help="Show detailed forensic reports, VLM reasoning, and raw logprobs"
-    )
-    st.session_state.debug_mode = debug_mode
-
-    # Analyze Button
-    analyze_button = st.button(
-        "🔍 Analyze Image",
-        type="primary",
-        disabled=(st.session_state.media is None),
-        use_container_width=True,
-        help="Run deepfake detection on the uploaded image"
-    )
-
-    # Advanced Settings Expander
+    # Advanced Settings Expander (moved before model selector to get detection_mode early)
     with st.expander("⚙️ Advanced Settings", expanded=False):
         # Detection Mode Selector
         detection_mode = st.radio(
@@ -178,17 +138,77 @@ with tab1:
             help="Alpha blending: 0.0 = pure heatmap, 1.0 = pure original. Default 0.6 = 60% original + 40% heatmap."
         )
 
-        # Watermark Mode Toggle
-        watermark_mode = st.selectbox(
-            "🏷️ Watermark Handling",
-            options=["ignore", "analyze"],
+        # Watermark Mode Toggle (only for VLM mode)
+        if detection_mode == "spai_assisted":
+            watermark_mode = st.selectbox(
+                "🏷️ Watermark Handling",
+                options=["ignore", "analyze"],
+                format_func=lambda x: {
+                    "ignore": "Ignore (Treat as news logos)",
+                    "analyze": "Analyze (Flag AI watermarks)"
+                }[x],
+                index=0,
+                help="'Ignore' treats watermarks as news agency logos. 'Analyze' actively scans for AI tool watermarks (Sora, NanoBanana, etc.)"
+            )
+        else:
+            watermark_mode = "ignore"
+            st.info("💡 Watermark analysis requires VLM mode. Switch to 'SPAI + VLM' to enable.")
+
+    # VLM model selector (disabled in standalone mode)
+    vlm_disabled = (detection_mode == "spai_standalone")
+
+    if vlm_disabled:
+        st.selectbox(
+            "Select detection model",
+            ["(VLM disabled in SPAI standalone mode)"],
+            index=0,
+            disabled=True,
+            help="VLM is not used in SPAI standalone mode. Switch to 'SPAI + VLM' to enable model selection."
+        )
+        detect_model_key = list(display_to_model_key.values())[0]  # Default (won't be used)
+    else:
+        detect_model_display = st.selectbox(
+            "Select detection model",
+            list(display_to_model_key.keys()),
+            index=0,
+        )
+        detect_model_key = display_to_model_key[detect_model_display]
+
+    # OSINT Context Selector (only for VLM mode)
+    if detection_mode == "spai_assisted":
+        osint_context = st.selectbox(
+            "OSINT Context",
+            options=["auto", "military", "disaster", "propaganda"],
             format_func=lambda x: {
-                "ignore": "Ignore (Treat as news logos)",
-                "analyze": "Analyze (Flag AI watermarks)"
+                "auto": "Auto-Detect",
+                "military": "Military (Uniforms/Parades/Formations)",
+                "disaster": "Disaster/HADR (Flood/Rubble/Combat)",
+                "propaganda": "Propaganda/Showcase (Studio/News)"
             }[x],
             index=0,
-            help="'Ignore' treats watermarks as news agency logos. 'Analyze' actively scans for AI tool watermarks (Sora, NanoBanana, etc.)"
+            help="Select scene type for context-adaptive forensic thresholds"
         )
+        st.session_state.osint_context = osint_context
+    else:
+        osint_context = "auto"
+        st.info("💡 OSINT context analysis requires VLM mode. SPAI standalone provides spectral analysis only.")
+
+    # Debug Mode Toggle
+    debug_mode = st.checkbox(
+        "🔍 Enable Debug Mode",
+        value=st.session_state.debug_mode,
+        help="Show detailed forensic reports, VLM reasoning, and raw logprobs"
+    )
+    st.session_state.debug_mode = debug_mode
+
+    # Analyze Button
+    analyze_button = st.button(
+        "🔍 Analyze Image",
+        type="primary",
+        disabled=(st.session_state.media is None),
+        use_container_width=True,
+        help="Run deepfake detection on the uploaded image"
+    )
 
     left_col, right_col = st.columns([1, 2], gap="large")
 
@@ -403,10 +423,9 @@ Enable Debug Mode to see detailed SPAI scores.
                 # Store result
                 st.session_state.osint_result = result
 
-                # Store SPAI heatmap for display (if generated)
+                # Store SPAI heatmap for display (always generated now)
                 st.session_state.forensic_artifacts = None  # Clear old forensics
-                if 'debug' in result and detection_mode == "spai_assisted":
-                    # In spai_assisted mode, we have a heatmap
+                if result.get('spai_heatmap_bytes'):
                     st.session_state.forensic_artifacts = ("spai_heatmap", None)  # Marker for SPAI mode
 
                 # Create assistant message
@@ -424,16 +443,28 @@ Enable Debug Mode to see detailed SPAI scores.
                     tier_emoji = "✅"
 
                 # Format mode description
-                mode_desc = "SPAI + VLM" if detection_mode == "spai_assisted" else "SPAI Only"
+                if detection_mode == "spai_standalone":
+                    # SPAI standalone mode - show only SPAI results
+                    assistant_msg = f"""**Detection Mode:** SPAI Standalone (Spectral Analysis Only)
 
-                assistant_msg = f"""**Model:** {detect_model_display}
-**Detection Mode:** {mode_desc}
+**{tier_emoji} Classification: {tier}**
+**AI Generated Probability:** {p_fake_pct:.1f}%
+
+**SPAI Spectral Analysis:**
+{reasoning}
+
+💡 *View SPAI attention heatmap in the dropdown below the image*
+"""
+                else:
+                    # SPAI + VLM assisted mode - show comprehensive analysis
+                    assistant_msg = f"""**Model:** {detect_model_display}
+**Detection Mode:** SPAI + VLM (Comprehensive Analysis)
 **OSINT Context:** {osint_context.capitalize()}
 
 **{tier_emoji} Classification: {tier}**
 **AI Generated Probability:** {p_fake_pct:.1f}%
 
-**Analysis:**
+**VLM Analysis:**
 {reasoning}
 
 **SPAI Spectral Report:**
@@ -441,7 +472,7 @@ Enable Debug Mode to see detailed SPAI scores.
 {result.get('spai_report', 'No SPAI report available')}
 ```
 
-💡 *View SPAI attention heatmap below the image panel (if in assisted mode)*
+💡 *View SPAI attention heatmap in the dropdown below the image*
 """
 
                 # Add debug information if enabled
@@ -609,13 +640,19 @@ with tab2:
             help="Maximum resolution for SPAI analysis (higher = more accurate but slower)"
         )
 
-    # Choose which models to evaluate (default: all)
-    model_multiselect = st.multiselect(
-        "Select models to evaluate",
-        options=list(display_to_model_key.keys()),
-        default=list(display_to_model_key.keys()),
-    )
-    models_to_run = [display_to_model_key[d] for d in model_multiselect]
+    # Choose which models to evaluate (disabled if SPAI standalone)
+    eval_vlm_disabled = (eval_detection_mode == "spai_standalone")
+
+    if eval_vlm_disabled:
+        st.info("💡 VLM model selection is disabled in SPAI standalone mode. Only SPAI spectral analysis will be used.")
+        models_to_run = [list(display_to_model_key.values())[0]]  # Default (won't be used)
+    else:
+        model_multiselect = st.multiselect(
+            "Select models to evaluate",
+            options=list(display_to_model_key.keys()),
+            default=list(display_to_model_key.keys()),
+        )
+        models_to_run = [display_to_model_key[d] for d in model_multiselect]
 
     if eval_images and gt_file and models_to_run and st.button("🚀 Run Evaluation"):
         try:

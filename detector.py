@@ -179,10 +179,11 @@ class OSINTDetector:
         pipeline_start = time.time()
 
         try:
-            # Run SPAI analysis
+            # Run SPAI analysis with heatmap for visualization
             spai_result = self.spai.analyze(
                 image_bytes,
-                generate_heatmap=False,  # No heatmap needed in standalone mode
+                generate_heatmap=True,  # Generate heatmap for UI display
+                alpha=self.spai_overlay_alpha,
                 max_size=self.spai_max_size
             )
 
@@ -207,6 +208,7 @@ class OSINTDetector:
                 "confidence": confidence_fake,
                 "reasoning": spai_result["analysis_text"],
                 "spai_report": spai_result["analysis_text"],
+                "spai_heatmap_bytes": spai_result["heatmap_bytes"],  # Store heatmap for UI display
                 "metadata_auto_fail": False,
                 "raw_logits": {"real": logit_real, "fake": logit_fake},
                 "verdict_token": "B" if spai_result["spai_prediction"] == "AI Generated" else "A"
