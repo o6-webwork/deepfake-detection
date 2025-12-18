@@ -1073,29 +1073,13 @@ with tab2:
         st.info("💡 VLM model selection is disabled in SPAI standalone mode. Only SPAI spectral analysis will be used.")
         models_to_run = [list(display_to_model_key.values())[0]]  # Default (won't be used)
     else:
-        # Model selection with Load All button
-        col1, col2 = st.columns([4, 1])
-
-        # Determine default value for multiselect
-        if 'eval_selected_models' not in st.session_state:
-            st.session_state['eval_selected_models'] = []
-
-        with col1:
-            model_multiselect = st.multiselect(
-                "Select models to evaluate",
-                options=list(display_to_model_key.keys()),
-                default=st.session_state['eval_selected_models'],
-                help="Select one or more models to evaluate. Click 'Load All' to select all available models.",
-                key="eval_model_multiselect"
-            )
-        with col2:
-            st.write("")  # Spacing to align button
-            if st.button("📋 Load All", help="Select all available models"):
-                st.session_state['eval_selected_models'] = list(display_to_model_key.keys())
-                st.rerun()
-
-        # Update session state with current selection
-        st.session_state['eval_selected_models'] = model_multiselect
+        # Model selection (defaults to none)
+        model_multiselect = st.multiselect(
+            "Select models to evaluate",
+            options=list(display_to_model_key.keys()),
+            default=[],
+            help="Select one or more models to evaluate. You can select multiple models to compare their performance."
+        )
         models_to_run = [display_to_model_key[d] for d in model_multiselect]
 
     if eval_images and gt_file and models_to_run and st.button("🚀 Run Evaluation"):
