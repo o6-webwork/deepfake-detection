@@ -335,17 +335,28 @@ Enable Debug Mode to see detailed SPAI scores.
                         st.markdown("### OSINT Detection Result")
 
                         tier = result['tier']
-                        p_fake = result['confidence']  # detector.py always returns P(fake)
+                        p_fake = result['confidence']  # detector.py returns P(fake) or "not available"
 
-                        # Visual confidence bar with color coding
-                        if tier == "Deepfake":
-                            st.error(f"🚨 **{tier}** - AI Generated Probability: {p_fake*100:.1f}%")
-                        elif tier == "Suspicious":
-                            st.warning(f"⚠️ **{tier}** - AI Generated Probability: {p_fake*100:.1f}%")
+                        # Handle confidence display
+                        if isinstance(p_fake, str):  # "not available"
+                            confidence_display = "Not available (logprobs not supported)"
+                            # Visual tier indicator without confidence bar
+                            if tier == "Deepfake":
+                                st.error(f"🚨 **{tier}** - AI Generated Probability: {confidence_display}")
+                            elif tier == "Suspicious":
+                                st.warning(f"⚠️ **{tier}** - AI Generated Probability: {confidence_display}")
+                            else:
+                                st.success(f"✅ **{tier}** - AI Generated Probability: {confidence_display}")
                         else:
-                            st.success(f"✅ **{tier}** - AI Generated Probability: {p_fake*100:.1f}%")
+                            # Visual confidence bar with color coding
+                            if tier == "Deepfake":
+                                st.error(f"🚨 **{tier}** - AI Generated Probability: {p_fake*100:.1f}%")
+                            elif tier == "Suspicious":
+                                st.warning(f"⚠️ **{tier}** - AI Generated Probability: {p_fake*100:.1f}%")
+                            else:
+                                st.success(f"✅ **{tier}** - AI Generated Probability: {p_fake*100:.1f}%")
 
-                        st.progress(p_fake, text=f"AI Generated: {p_fake*100:.1f}%")
+                            st.progress(p_fake, text=f"AI Generated: {p_fake*100:.1f}%")
 
                         # Metadata auto-fail indicator
                         if result.get('metadata_auto_fail', False):
@@ -368,19 +379,24 @@ Enable Debug Mode to see detailed SPAI scores.
                 # Extract filename and classification for expander title
                 filename = msg.get("filename", "Unknown")
                 tier = msg.get("tier", "Unknown")
-                p_fake_pct = msg.get("p_fake_pct", 0)
+                p_fake_pct = msg.get("p_fake_pct", None)
 
-                # Determine emoji based on tier
+                # Determine emoji based on standardized three-tier system
                 if tier == "Deepfake":
                     tier_emoji = "🚨"
                 elif tier == "Suspicious":
                     tier_emoji = "⚠️"
-                else:
+                else:  # Authentic
                     tier_emoji = "✅"
 
-                # Create collapsible expander
+                # Create collapsible expander with appropriate title
+                if p_fake_pct is not None:
+                    expander_title = f"{tier_emoji} **{filename}** - {tier} (AI Generated: {p_fake_pct:.1f}%)"
+                else:
+                    expander_title = f"{tier_emoji} **{filename}** - {tier} (Confidence: Not available)"
+
                 with st.expander(
-                    f"{tier_emoji} **{filename}** - {tier} (AI Generated: {p_fake_pct:.1f}%)",
+                    expander_title,
                     expanded=(i == len(st.session_state.messages) - 1)  # Only expand latest result
                 ):
                     st.markdown(msg['content'], unsafe_allow_html=True)
@@ -456,28 +472,41 @@ Enable Debug Mode to see detailed SPAI scores.
 
                 # Create assistant message
                 tier = result['tier']
-                p_fake = result['confidence']  # detector.py always returns P(fake)
-                p_fake_pct = p_fake * 100
+                p_fake = result['confidence']  # detector.py returns P(fake) or "not available"
+
+                # Handle confidence display
+                if isinstance(p_fake, str):  # "not available"
+                    p_fake_pct = None
+                    confidence_display = "Not available (logprobs not supported)"
+                else:
+                    p_fake_pct = p_fake * 100
+                    confidence_display = f"{p_fake_pct:.1f}%"
+
                 reasoning = result['reasoning']
 
-                # Determine color coding
+                # Determine color coding (standardized three-tier system)
                 if tier == "Deepfake":
                     tier_emoji = "🚨"
                 elif tier == "Suspicious":
                     tier_emoji = "⚠️"
-                else:
+                else:  # Authentic
                     tier_emoji = "✅"
 
                 # Format mode description
                 if detection_mode == "spai_standalone":
                     # SPAI standalone mode - show only SPAI results with clear prediction
-                    spai_prediction = "AI-Generated" if p_fake >= 0.5 else "Real"
+                    # Note: SPAI always returns numeric scores, but add safety check
+                    if isinstance(p_fake, (int, float)):
+                        spai_prediction = "AI-Generated" if p_fake >= 0.5 else "Real"
 
-                    # Show probability in clearer format
-                    if spai_prediction == "AI-Generated":
-                        prob_display = f"**AI-Generated Probability:** {p_fake_pct:.1f}%"
+                        # Show probability in clearer format
+                        if spai_prediction == "AI-Generated":
+                            prob_display = f"**AI-Generated Probability:** {p_fake_pct:.1f}%"
+                        else:
+                            prob_display = f"**Real Probability:** {(100 - p_fake_pct):.1f}% (AI: {p_fake_pct:.1f}%)"
                     else:
-                        prob_display = f"**Real Probability:** {(100 - p_fake_pct):.1f}% (AI: {p_fake_pct:.1f}%)"
+                        spai_prediction = "Unknown"
+                        prob_display = f"**Confidence:** {confidence_display}"
 
                     assistant_msg = f"""**Detection Mode:** SPAI Standalone (Spectral Analysis Only)
 
@@ -496,7 +525,7 @@ Enable Debug Mode to see detailed SPAI scores.
 **OSINT Context:** {osint_context.capitalize()}
 
 **{tier_emoji} Classification: {tier}**
-**AI Generated Probability:** {p_fake_pct:.1f}%
+**AI Generated Probability:** {confidence_display}
 
 **VLM Analysis:**
 {reasoning}
@@ -560,18 +589,53 @@ Enable Debug Mode to see detailed SPAI scores.
 
 **Top K=5 Tokens:**
 """
-                        # Format top-k logprobs as table
-                        for i, (token, logprob) in enumerate(debug.get('top_k_logprobs', [])[:5], 1):
-                            prob = math.exp(logprob)
-                            interpretation = ""
-                            if token in detector.REAL_TOKENS:
-                                interpretation = "(REAL)"
-                            elif token in detector.FAKE_TOKENS:
-                                interpretation = "(FAKE)"
+                        # Format top-k logprobs as table (only if available)
+                        if debug.get('top_k_logprobs'):
+                            for i, (token, logprob) in enumerate(debug.get('top_k_logprobs', [])[:5], 1):
+                                prob = math.exp(logprob)
+                                interpretation = ""
+                                if token in detector.REAL_TOKENS:
+                                    interpretation = "(REAL)"
+                                elif token in detector.FAKE_TOKENS:
+                                    interpretation = "(FAKE)"
 
-                            assistant_msg += f"\n{i}. `{repr(token)}`: {logprob:.3f} → {prob:.4f} {interpretation}"
+                                assistant_msg += f"\n{i}. `{repr(token)}`: {logprob:.3f} → {prob:.4f} {interpretation}"
+                        else:
+                            assistant_msg += "\n*No logprobs available (not supported by this VLM provider)*"
 
-                        assistant_msg += f"""
+                        # Show probabilities only if confidence is a number
+                        if isinstance(p_fake, str):
+                            assistant_msg += f"""
+
+**Classification Result:**
+- Verdict: {result.get('verdict_token', 'N/A')}
+- Confidence: {confidence_display}
+- Tier: **{tier}**
+
+*Note: This VLM provider does not support logprobs. Classification is based on text-based A/B extraction.*
+
+---
+### ⚙️ System Prompt
+
+```
+{debug.get('system_prompt', 'N/A (standalone mode)')}
+```
+
+---
+### ⏱️ Performance Metrics
+
+**Stage-by-Stage Timing:**
+- Stage 0 (Metadata): {debug.get('stage_0_time', 0):.3f}s
+- Stage 1 (Forensics): {debug.get('stage_1_time', 0):.3f}s
+- Stage 2 (VLM Analysis): {debug['request_1_latency']:.2f}s
+- Stage 3 (Verdict): {debug['request_2_latency']:.2f}s
+
+**Total Pipeline:** {debug['total_pipeline_time']:.2f}s
+
+**KV-Cache Hit:** {'✅ YES' if debug.get('kv_cache_hit', False) else '❌ NO'}
+"""
+                        else:
+                            assistant_msg += f"""
 
 **Softmax Normalized Probabilities:**
 - AI Generated: {p_fake:.4f} ({p_fake_pct:.1f}%)

@@ -357,6 +357,18 @@ OSINT Context: {self.context.capitalize()}
         # Stage 4: Determine tier based on confidence
         tier = self._classify_tier(verdict_result["confidence"])
 
+        # If confidence is not available, use token-based classification
+        # Trust the VLM's binary decision (A=Authentic, B=Deepfake)
+        if tier == "not available" and verdict_result["token"]:
+            if verdict_result["token"] in self.FAKE_TOKENS:
+                tier = "Deepfake"  # VLM says fake → trust it
+            elif verdict_result["token"] in self.REAL_TOKENS:
+                tier = "Authentic"  # VLM says real → trust it
+            else:
+                tier = "Suspicious"  # No clear token → uncertain
+        elif tier == "not available":
+            tier = "Suspicious"  # No verdict at all → conservative
+
         total_time = time.time() - pipeline_start
 
         result = {
@@ -521,12 +533,20 @@ OSINT Context: {self.context.capitalize()}
 
         req1_start = time.time()
         try:
-            response_1 = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                temperature=0.0,
-                max_tokens=2000  # Extended to accommodate detailed analysis requirements
-            )
+            # Use adapter's create_completion for cloud providers, or direct OpenAI SDK
+            if hasattr(self.client, 'create_completion'):
+                response_1 = self.client.create_completion(
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=4000
+                )
+            else:
+                response_1 = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=4000
+                )
             req1_time = time.time() - req1_start
 
             analysis_text = response_1.choices[0].message.content
@@ -566,14 +586,24 @@ Answer with ONLY the single letter A or B."""
 
         req2_start = time.time()
         try:
-            response_2 = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                temperature=0.0,
-                max_tokens=1,
-                logprobs=True,
-                top_logprobs=5
-            )
+            # Use adapter's create_completion for cloud providers, or direct OpenAI SDK
+            if hasattr(self.client, 'create_completion'):
+                response_2 = self.client.create_completion(
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=1000,
+                    logprobs=True,
+                    top_logprobs=5
+                )
+            else:
+                response_2 = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=1000,
+                    logprobs=True,
+                    top_logprobs=5
+                )
             req2_time = time.time() - req2_start
 
             # Parse verdict logprobs
@@ -667,23 +697,73 @@ Answer with ONLY the single letter A or B."""
             }
 
         except Exception as e:
-            return {
-                "token": None,
-                "confidence": 0.5,
-                "raw_logits": {"real": -0.69, "fake": -0.69},
-                "top_k_logprobs": [],
-                "error": str(e)
-            }
+            # Logprobs not available - try to parse text response for A/B
+            try:
+                response_text = response.choices[0].message.content.strip().upper()
+                import re
 
-    def _classify_tier(self, confidence_fake: float) -> str:
-        """
-        Classify into three-tier system.
+                # Look for standalone A or B in the response
+                standalone_match = re.search(r'(?:^|[\s\n\r])\(?([AB])\)?(?:[\s\n\r\.]|$)', response_text)
 
-        Thresholds:
-            - confidence_fake >= 0.90 → Deepfake
-            - 0.50 <= confidence_fake < 0.90 → Suspicious
-            - confidence_fake < 0.50 → Authentic
+                if standalone_match:
+                    token = standalone_match.group(1)
+                elif response_text in ['A', 'B']:
+                    token = response_text
+                elif '(A)' in response_text:
+                    token = 'A'
+                elif '(B)' in response_text:
+                    token = 'B'
+                else:
+                    # Search anywhere in response
+                    if 'A' in response_text and 'B' not in response_text:
+                        token = 'A'
+                    elif 'B' in response_text and 'A' not in response_text:
+                        token = 'B'
+                    else:
+                        token = None
+
+                return {
+                    "token": token,
+                    "confidence": "not available",
+                    "raw_logits": {"real": "N/A", "fake": "N/A"},
+                    "top_k_logprobs": [],
+                    "error": f"Logprobs not available: {str(e)}"
+                }
+            except:
+                # Complete fallback
+                return {
+                    "token": None,
+                    "confidence": "not available",
+                    "raw_logits": {"real": "N/A", "fake": "N/A"},
+                    "top_k_logprobs": [],
+                    "error": str(e)
+                }
+
+    def _classify_tier(self, confidence_fake) -> str:
         """
+        Classify into standardized three-tier system.
+
+        Args:
+            confidence_fake: Either a float (0.0-1.0) or "not available"
+
+        Returns:
+            One of: "Deepfake", "Suspicious", or "Authentic"
+            (or "not available" if confidence is string - caller handles token-based mapping)
+
+        Confidence-based Thresholds:
+            - confidence_fake >= 0.90 → Deepfake (high confidence AI-generated)
+            - 0.50 <= confidence_fake < 0.90 → Suspicious (possible AI-generated)
+            - confidence_fake < 0.50 → Authentic (likely real)
+
+        Token-based Mapping (when logprobs unavailable):
+            - Token "B" (Fake) → Deepfake (trust VLM's binary decision)
+            - Token "A" (Real) → Authentic (trust VLM's binary decision)
+        """
+        # Handle string case (when logprobs not available)
+        if isinstance(confidence_fake, str):
+            return "not available"  # Will be replaced by token-based classification
+
+        # Normal float-based classification
         if confidence_fake >= 0.90:
             return "Deepfake"
         elif confidence_fake >= 0.50:

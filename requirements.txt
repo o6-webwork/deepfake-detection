@@ -10,7 +10,12 @@ pyyaml>=6.0.0
 
 # Cloud VLM providers
 anthropic>=0.34.0
-google-generativeai>=0.8.0
+google-genai>=0.2.0
+
+# Analytics and reporting
+plotly>=5.14.0
+reportlab>=4.0.0
+kaleido>=0.2.1
 
 # SPAI (Spectral AI-Generated Image Detector) dependencies
 torch>=2.0.0
