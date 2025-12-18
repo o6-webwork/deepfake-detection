@@ -572,12 +572,15 @@ OSINT Context: {self.context.capitalize()}
         messages.append({"role": "assistant", "content": analysis_text})
 
         # Request 2: Verdict (KV-cache optimized)
-        verdict_prompt = """Based on your analysis, provide your final verdict:
+        # Load verdict prompt from prompts.yaml
+        verdict_prompt = self.prompts.get('verdict_prompt',
+            """Based on your analysis, provide your final verdict:
 
 (A) Real (Authentic Capture)
 (B) Fake (AI Generated/Manipulated)
 
 Answer with ONLY the single letter A or B."""
+        ).strip()
 
         messages.append({
             "role": "user",
