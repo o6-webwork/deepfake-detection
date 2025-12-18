@@ -31,13 +31,19 @@ def extract_verdict_from_detector_output(result: Dict) -> Dict:
     confidence_fake = result.get('confidence', 0.5)
     tier = result.get('tier', 'Suspicious')
     reasoning = result.get('reasoning', 'No analysis available')
-    verdict_info = result.get('verdict', {})
-    verdict_token = verdict_info.get('token', 'B' if confidence_fake >= 0.5 else 'A')
+    verdict_token = result.get('verdict_token', None)
+
+    # Get verdict token, handling case where confidence might be "not available"
+    if verdict_token is None:
+        # Fallback: derive from confidence if it's a number
+        if isinstance(confidence_fake, (int, float)):
+            verdict_token = 'B' if confidence_fake >= 0.5 else 'A'
+        else:
+            # Confidence not available, derive from tier
+            verdict_token = 'A' if tier == "Authentic" else 'B'
 
     # Determine classification (binary for metrics calculation)
-    # Use tier-based logic for consistency:
-    # - Authentic (confidence_fake < 0.50) → "Real"
-    # - Suspicious/Deepfake (confidence_fake >= 0.50) → "AI Generated"
+    # Use tier-based logic for consistency with standardized three-tier system
     if tier == "Authentic":
         classification = "Real"
     else:  # Suspicious or Deepfake

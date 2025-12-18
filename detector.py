@@ -55,14 +55,30 @@ class OSINTDetector:
     ]
 
     @classmethod
-    def _load_prompts(cls, prompts_path: str = "prompts.yaml") -> dict:
-        """Load prompt templates from YAML configuration file."""
+    def _load_prompts(cls, prompts_path: str = "prompts/current.yaml") -> dict:
+        """
+        Load prompt templates from YAML configuration file.
+
+        Now uses file-per-version system: loads from prompts/current.yaml
+        which points to the active version file.
+
+        Returns:
+            dict: Prompts dictionary with metadata section for version tracking
+        """
         yaml_path = Path(prompts_path)
         if not yaml_path.exists():
             raise FileNotFoundError(f"Prompts file not found: {prompts_path}")
 
         with open(yaml_path, 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f)
+            prompts = yaml.safe_load(f)
+
+        # Log prompt version if metadata exists
+        if 'metadata' in prompts:
+            metadata = prompts['metadata']
+            print(f"📋 Loaded prompts version {metadata.get('version', 'unknown')} "
+                  f"(updated: {metadata.get('last_updated', 'unknown')})")
+
+        return prompts
 
     def __init__(
         self,
@@ -72,7 +88,7 @@ class OSINTDetector:
         context: str = "auto",
         watermark_mode: str = "ignore",
         provider: str = "vllm",
-        prompts_path: str = "prompts.yaml",
+        prompts_path: str = "prompts/current.yaml",
         detection_mode: str = "spai_assisted",
         spai_detector: Optional['SPAIDetector'] = None,
         spai_config_path: str = "spai/configs/spai.yaml",
@@ -357,6 +373,18 @@ OSINT Context: {self.context.capitalize()}
         # Stage 4: Determine tier based on confidence
         tier = self._classify_tier(verdict_result["confidence"])
 
+        # If confidence is not available, use token-based classification
+        # Trust the VLM's binary decision (A=Authentic, B=Deepfake)
+        if tier == "not available" and verdict_result["token"]:
+            if verdict_result["token"] in self.FAKE_TOKENS:
+                tier = "Deepfake"  # VLM says fake → trust it
+            elif verdict_result["token"] in self.REAL_TOKENS:
+                tier = "Authentic"  # VLM says real → trust it
+            else:
+                tier = "Suspicious"  # No clear token → uncertain
+        elif tier == "not available":
+            tier = "Suspicious"  # No verdict at all → conservative
+
         total_time = time.time() - pipeline_start
 
         result = {
@@ -521,12 +549,20 @@ OSINT Context: {self.context.capitalize()}
 
         req1_start = time.time()
         try:
-            response_1 = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                temperature=0.0,
-                max_tokens=2000  # Extended to accommodate detailed analysis requirements
-            )
+            # Use adapter's create_completion for cloud providers, or direct OpenAI SDK
+            if hasattr(self.client, 'create_completion'):
+                response_1 = self.client.create_completion(
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=4000
+                )
+            else:
+                response_1 = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=4000
+                )
             req1_time = time.time() - req1_start
 
             analysis_text = response_1.choices[0].message.content
@@ -552,12 +588,15 @@ OSINT Context: {self.context.capitalize()}
         messages.append({"role": "assistant", "content": analysis_text})
 
         # Request 2: Verdict (KV-cache optimized)
-        verdict_prompt = """Based on your analysis, provide your final verdict:
+        # Load verdict prompt from prompts.yaml
+        verdict_prompt = self.prompts.get('verdict_prompt',
+            """Based on your analysis, provide your final verdict:
 
 (A) Real (Authentic Capture)
 (B) Fake (AI Generated/Manipulated)
 
 Answer with ONLY the single letter A or B."""
+        ).strip()
 
         messages.append({
             "role": "user",
@@ -566,20 +605,32 @@ Answer with ONLY the single letter A or B."""
 
         req2_start = time.time()
         try:
-            response_2 = self.client.chat.completions.create(
-                model=self.model_name,
-                messages=messages,
-                temperature=0.0,
-                max_tokens=1,
-                logprobs=True,
-                top_logprobs=5
-            )
+            # Use adapter's create_completion for cloud providers, or direct OpenAI SDK
+            if hasattr(self.client, 'create_completion'):
+                response_2 = self.client.create_completion(
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=1000,
+                    logprobs=True,
+                    top_logprobs=5
+                )
+            else:
+                response_2 = self.client.chat.completions.create(
+                    model=self.model_name,
+                    messages=messages,
+                    temperature=0.0,
+                    max_tokens=1000,
+                    logprobs=True,
+                    top_logprobs=5
+                )
             req2_time = time.time() - req2_start
 
             # Parse verdict logprobs
             verdict_result = self._parse_verdict(response_2)
 
-            req2_tokens = len(verdict_prompt.split())
+            # Request 2 tokens = Request 1 output + verdict prompt (KV-cache reuses system + images)
+            # Estimate: 1 token ≈ 4 chars for text
+            req2_tokens = len(analysis_text) // 4 + len(verdict_prompt) // 4
 
         except Exception as e:
             req2_time = time.time() - req2_start
@@ -667,23 +718,73 @@ Answer with ONLY the single letter A or B."""
             }
 
         except Exception as e:
-            return {
-                "token": None,
-                "confidence": 0.5,
-                "raw_logits": {"real": -0.69, "fake": -0.69},
-                "top_k_logprobs": [],
-                "error": str(e)
-            }
+            # Logprobs not available - try to parse text response for A/B
+            try:
+                response_text = response.choices[0].message.content.strip().upper()
+                import re
 
-    def _classify_tier(self, confidence_fake: float) -> str:
-        """
-        Classify into three-tier system.
+                # Look for standalone A or B in the response
+                standalone_match = re.search(r'(?:^|[\s\n\r])\(?([AB])\)?(?:[\s\n\r\.]|$)', response_text)
 
-        Thresholds:
-            - confidence_fake >= 0.90 → Deepfake
-            - 0.50 <= confidence_fake < 0.90 → Suspicious
-            - confidence_fake < 0.50 → Authentic
+                if standalone_match:
+                    token = standalone_match.group(1)
+                elif response_text in ['A', 'B']:
+                    token = response_text
+                elif '(A)' in response_text:
+                    token = 'A'
+                elif '(B)' in response_text:
+                    token = 'B'
+                else:
+                    # Search anywhere in response
+                    if 'A' in response_text and 'B' not in response_text:
+                        token = 'A'
+                    elif 'B' in response_text and 'A' not in response_text:
+                        token = 'B'
+                    else:
+                        token = None
+
+                return {
+                    "token": token,
+                    "confidence": "not available",
+                    "raw_logits": {"real": "N/A", "fake": "N/A"},
+                    "top_k_logprobs": [],
+                    "error": f"Logprobs not available: {str(e)}"
+                }
+            except:
+                # Complete fallback
+                return {
+                    "token": None,
+                    "confidence": "not available",
+                    "raw_logits": {"real": "N/A", "fake": "N/A"},
+                    "top_k_logprobs": [],
+                    "error": str(e)
+                }
+
+    def _classify_tier(self, confidence_fake) -> str:
         """
+        Classify into standardized three-tier system.
+
+        Args:
+            confidence_fake: Either a float (0.0-1.0) or "not available"
+
+        Returns:
+            One of: "Deepfake", "Suspicious", or "Authentic"
+            (or "not available" if confidence is string - caller handles token-based mapping)
+
+        Confidence-based Thresholds:
+            - confidence_fake >= 0.90 → Deepfake (high confidence AI-generated)
+            - 0.50 <= confidence_fake < 0.90 → Suspicious (possible AI-generated)
+            - confidence_fake < 0.50 → Authentic (likely real)
+
+        Token-based Mapping (when logprobs unavailable):
+            - Token "B" (Fake) → Deepfake (trust VLM's binary decision)
+            - Token "A" (Real) → Authentic (trust VLM's binary decision)
+        """
+        # Handle string case (when logprobs not available)
+        if isinstance(confidence_fake, str):
+            return "not available"  # Will be replaced by token-based classification
+
+        # Normal float-based classification
         if confidence_fake >= 0.90:
             return "Deepfake"
         elif confidence_fake >= 0.50:

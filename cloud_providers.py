@@ -170,68 +170,73 @@ class GeminiAdapter(CloudProviderAdapter):
     def __init__(self, model_name: str, api_key: str):
         super().__init__(model_name, api_key)
         try:
-            import google.generativeai as genai
-            genai.configure(api_key=api_key)
-            self.client = genai.GenerativeModel(model_name)
+            from google import genai
+            self.client = genai.Client(api_key=api_key)
         except ImportError:
             raise ImportError(
-                "Google Generative AI SDK not installed. Run: pip install google-generativeai"
+                "Google GenAI SDK not installed. Run: pip install google-genai"
             )
 
-    def _convert_messages(self, messages: List[Dict]) -> List[Dict]:
+    def _convert_messages(self, messages: List[Dict]) -> tuple:
         """
         Convert OpenAI-style messages to Gemini format.
 
-        Gemini doesn't have a system role, so we prepend system content to first user message.
-        """
-        import google.generativeai as genai
+        Gemini uses a different message format than OpenAI:
+        - System message becomes system_instruction
+        - Messages are in user/model alternating format (not user/assistant)
+        - Contents are sent as a list of Content objects with role and parts
 
-        system_content = ""
-        gemini_messages = []
+        Returns:
+            (system_instruction, contents_list)
+        """
+        from google.genai import types
+        import base64 as b64
+
+        system_instruction = ""
+        contents = []
 
         for msg in messages:
             if msg["role"] == "system":
-                system_content = msg["content"] + "\n\n"
+                system_instruction = msg["content"]
             elif msg["role"] == "user":
                 parts = []
 
-                # Add system prompt to first user message
-                if system_content and len(gemini_messages) == 0:
-                    parts.append(system_content)
-
                 # Process content
                 if isinstance(msg["content"], str):
-                    parts.append(msg["content"])
+                    # Create a Part object for text
+                    parts.append(types.Part(text=msg["content"]))
                 elif isinstance(msg["content"], list):
                     for part in msg["content"]:
                         if part["type"] == "text":
-                            parts.append(part["text"])
+                            # Create a Part object for text
+                            parts.append(types.Part(text=part["text"]))
                         elif part["type"] == "image_url":
                             # Extract base64 from data URI
                             image_url = part["image_url"]["url"]
                             if image_url.startswith("data:"):
+                                # Format: data:image/png;base64,<base64_data>
+                                media_type = image_url.split(";")[0].split(":")[1]
                                 base64_data = image_url.split(",")[1]
-                                # Decode base64 to bytes
-                                import base64 as b64
                                 image_bytes = b64.b64decode(base64_data)
-                                # Create PIL Image
-                                from PIL import Image
-                                import io
-                                pil_image = Image.open(io.BytesIO(image_bytes))
-                                parts.append(pil_image)
 
-                gemini_messages.append({
-                    "role": "user",
-                    "parts": parts
-                })
+                                # Add image part using types.Part.from_bytes
+                                parts.append(
+                                    types.Part.from_bytes(
+                                        data=image_bytes,
+                                        mime_type=media_type
+                                    )
+                                )
+
+                # Add user message as Content with role="user"
+                contents.append(types.Content(role="user", parts=parts))
+
             elif msg["role"] == "assistant":
-                if isinstance(msg["content"], str):
-                    gemini_messages.append({
-                        "role": "model",
-                        "parts": [msg["content"]]
-                    })
+                # Gemini uses "model" instead of "assistant"
+                # Assistant messages are always text-only
+                text_content = msg["content"] if isinstance(msg["content"], str) else str(msg["content"])
+                contents.append(types.Content(role="model", parts=[types.Part(text=text_content)]))
 
-        return gemini_messages
+        return system_instruction, contents
 
     def create_completion(
         self,
@@ -242,43 +247,91 @@ class GeminiAdapter(CloudProviderAdapter):
         top_logprobs: Optional[int] = None
     ) -> Any:
         """Create chat completion using Gemini API."""
-        gemini_messages = self._convert_messages(messages)
+        from google.genai import types
 
-        # Extract parts from last user message
-        last_message = gemini_messages[-1]
-        parts = last_message["parts"]
+        system_instruction, contents = self._convert_messages(messages)
 
-        # Build chat history (all messages except last)
-        history = []
-        for msg in gemini_messages[:-1]:
-            history.append({
-                "role": msg["role"],
-                "parts": msg["parts"]
-            })
-
-        # Generate response
-        generation_config = {
+        # Build generation config
+        config_params = {
             "temperature": temperature,
             "max_output_tokens": max_tokens,
         }
 
-        if history:
-            chat = self.client.start_chat(history=history)
-            response = chat.send_message(parts, generation_config=generation_config)
-        else:
-            response = self.client.generate_content(parts, generation_config=generation_config)
+        # NOTE: Logprobs are NOT supported in Gemini Developer API
+        # Only available in Vertex AI
+        # Attempting to enable them can cause silent failures or empty responses
+        # So we intentionally skip logprobs configuration for Gemini
+
+        config = types.GenerateContentConfig(**config_params)
+
+        # Add system instruction if present
+        if system_instruction:
+            config.system_instruction = system_instruction
+
+        # Generate response using new API
+        response = self.client.models.generate_content(
+            model=self.model_name,
+            contents=contents,
+            config=config
+        )
 
         # Convert to OpenAI-like format
-        class MockChoice:
+        class MockLogprob:
+            def __init__(self, token, logprob):
+                self.token = token
+                self.logprob = logprob
+
+        class MockLogprobsContent:
+            def __init__(self, token, top_logprobs):
+                self.token = token
+                self.top_logprobs = top_logprobs
+
+        class MockLogprobs:
             def __init__(self, content):
+                self.content = content
+
+        class MockChoice:
+            def __init__(self, content, gemini_response, logprobs_requested):
                 self.message = type('obj', (object,), {'content': content})
+
+                # Gemini Developer API does NOT support logprobs (only Vertex AI does)
+                # Always set logprobs to None to avoid confusion
                 self.logprobs = None
 
         class MockResponse:
-            def __init__(self, response):
-                self.choices = [MockChoice(response.text)]
+            def __init__(self, response, logprobs_requested):
+                # Get response text, handle case where it might be None or empty
+                response_text = None
 
-        return MockResponse(response)
+                # Try to extract text from response
+                if hasattr(response, 'text'):
+                    response_text = response.text
+                elif hasattr(response, 'content'):
+                    response_text = response.content
+                elif hasattr(response, 'candidates') and len(response.candidates) > 0:
+                    # Try to get text from first candidate
+                    candidate = response.candidates[0]
+                    if hasattr(candidate, 'content') and hasattr(candidate.content, 'parts'):
+                        parts = candidate.content.parts
+                        if len(parts) > 0 and hasattr(parts[0], 'text'):
+                            response_text = parts[0].text
+
+                # If still None or empty, generate error message
+                if not response_text:
+                    # Check if response was blocked by safety filters
+                    error_msg = "[ERROR: Gemini returned empty response. "
+                    if hasattr(response, 'candidates') and len(response.candidates) > 0:
+                        candidate = response.candidates[0]
+                        if hasattr(candidate, 'finish_reason'):
+                            error_msg += f"Finish reason: {candidate.finish_reason}. "
+                        if hasattr(candidate, 'safety_ratings'):
+                            error_msg += f"Safety ratings: {candidate.safety_ratings}. "
+                    error_msg += f"Response type: {type(response).__name__}]"
+                    response_text = error_msg
+
+                self.choices = [MockChoice(response_text, response, logprobs_requested)]
+
+        return MockResponse(response, logprobs)
 
 
 def get_cloud_adapter(provider: str, model_name: str, api_key: str, base_url: Optional[str] = None):

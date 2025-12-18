@@ -1,6 +1,24 @@
 # Deepfake Detection Prompt Configuration
 # This file contains all system and analysis prompts used by the detector
 
+# ==================== Prompt Version Control ====================
+metadata:
+  version: "1.0.0"
+  last_updated: "2024-12-18"
+  description: "NexInspect OSINT Deepfake Detection Prompts"
+
+  # Version Changelog
+  changelog:
+    - version: "1.0.0"
+      date: "2024-12-18"
+      changes:
+        - "Initial versioned release"
+        - "Centralized verdict_prompt from detector.py"
+        - "Established baseline for prompt version control"
+        - "Added metadata section for tracking"
+      author: "Claude Code"
+
+# ==================== System Prompts ====================
 system_prompts:
   # Base system prompt (used for SPAI-assisted mode)
   base: |
@@ -168,3 +186,12 @@ watermark_instructions:
 
   ignore: |
     **DO NOT** analyze, mention, or consider any watermarks, text overlays, corner logos, timestamps, or channel branding in your reasoning. These are OSINT source attributions (news agencies, TV stations) and are **completely irrelevant** to authenticity assessment. Focus ONLY on the visual content itself.
+
+# Verdict extraction prompt (Request 2 in two-stage classification)
+verdict_prompt: |
+  Based on your analysis, provide your final verdict:
+
+  (A) Real (Authentic Capture)
+  (B) Fake (AI Generated/Manipulated)
+
+  Answer with ONLY the single letter A or B.

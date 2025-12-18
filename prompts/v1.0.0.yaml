@@ -1,0 +1,295 @@
+metadata:
+  version: 1.1.0
+  last_updated: '2025-12-19'
+  description: NexInspect OSINT Deepfake Detection Prompts
+  changelog:
+  - version: 1.1.0
+    date: '2025-12-19'
+    changes:
+    - --changes
+    - Separate observation from verdict in system prompts
+    - --changes
+    - 'Add critical constraint: DO NOT give final verdict, only report observations'
+    - --changes
+    - Reframe analyst as junior role reporting to senior
+    - --changes
+    - Update verdict prompt with senior analyst role making judgment call
+    - --changes
+    - 'Add operational cost emphasis: high cost of missing AI-generated images'
+    - --changes
+    - Mitigate timidity bias causing high false negative rate
+    - --author
+    - User
+    author: User
+  - version: 1.0.0
+    date: '2024-12-18'
+    changes:
+    - Initial versioned release
+    - Centralized verdict_prompt from detector.py
+    - Established baseline for prompt version control
+    - Added metadata section for tracking
+    author: Claude Code
+system_prompts:
+  base: 'You are an OSINT analyst specializing in military, disaster, and propaganda
+    imagery verification whose sole task is to determine whether a given picture is
+    a genuine photograph or an AI-generated creation. You will work in conjunction
+    with SPAI (Spectral AI-Generated Image Detector), a CVPR2025 Vision Transformer
+    model that analyzes frequency-domain patterns. Leverage SPAI''s spectral analysis
+    alongside visual examination to reason rigorously, examining each aspect of the
+    image for tell-tale artifacts or authentic cues. Draw on common sense, domain
+    knowledge, and real-world experience to deliver a clear, comprehensive, and accurate
+    assessment—and explain your verdict step by step.
+
+    '
+  simplified: 'You are an OSINT analyst specializing in military, disaster, and propaganda
+    imagery verification whose sole task is to determine whether a given picture is
+    a genuine photograph or an AI-generated creation. Leverage every analytical tool
+    at your disposal and reason rigorously, examining each aspect of the image for
+    tell-tale artifacts or authentic cues. Draw on common sense, domain knowledge,
+    and real-world experience to deliver a clear, comprehensive, and accurate assessment—and
+    explain your verdict step by step.
+
+    '
+  spai_protocols:
+    case_a: "CASE A: Uniforms / Parades / Formations (Military Context)\n- Natural\
+      \ Patterns: IGNORE MACRO-scale repetitive patterns (e.g., lines of soldiers,\
+      \ rows of tanks, windows on buildings).\n  * These are organic formations, not\
+      \ AI artifacts\n- Focus Areas: Check warm-colored regions in the heatmap for\
+      \ MICRO-scale anomalies:\n  * Clone stamp errors (duplicate faces, floating\
+      \ weapons)\n  * Pixel-perfect anomalies in uniform backgrounds (sky/walls)\n\
+      \  * Unnatural uniformity in equipment or faces\n- Context: Military imagery\
+      \ naturally contains formations and repetition - distinguish natural alignment\
+      \ from AI duplication.\n"
+    case_b: "CASE B: Disaster/HADR Context (Flood/Rubble/Combat)\n- Natural Chaos:\
+      \ Expect high visual complexity and irregular patterns.\n- Focus Areas: Check\
+      \ warm-colored regions in the heatmap for:\n  * Physics failures (liquid fire,\
+      \ smoke without shadows)\n  * Impossible debris arrangements\n  * Over-smoothed\
+      \ damage textures\n- Context: Do NOT flag \"messy\" textures or chaotic patterns\
+      \ as suspicious - disaster scenes are inherently irregular.\n"
+    case_c: "CASE C: Propaganda/Showcase Context (Studio/News)\n- Natural Post-Processing:\
+      \ Expect professional editing (color grading, sharpening, beautification).\n\
+      - Focus Areas: Check warm-colored regions in the heatmap for:\n  * Generation\
+      \ artifacts (over-smoothing, texture repetition, impossible lighting)\n  * Synthetic\
+      \ backgrounds or backdrops\n  * Unnatural skin texture or facial features\n\
+      - Context: Distinguish professional retouching from AI generation. Check metadata\
+      \ for camera signatures.\n"
+analysis_instructions:
+  visual_analysis: '## Analysis dimensions (scan each dimension thoroughly)
+
+    1. Scene realism
+
+    - Does the scene belong to the physical world?
+
+    - Is the image surreal / 3-D rendered / impossible in real life (e.g., cinematic
+    lighting, highly stylized or painterly rendering)
+
+
+    2. Object defects & anomalies (including but not limited to)
+
+    - Shape distortion / breaks / holes
+
+    - Unnatural texture repetition, stretching, or floating pixels
+
+    - Perspective or proportion errors
+
+
+    3. Lighting & shadows
+
+    - Are light direction, shadows, reflections, and exposure natural and self-consistent?
+
+
+    4. Focus & depth of field
+
+    - Are foreground/background blur and edge fall-off appropriate?
+
+
+    5. Sharpness consistency
+
+    - Are resolution and noise distribution uniform across the frame?
+
+    - Are some areas extremely detailed while others are overly smooth?
+
+
+    6. Object interactions
+
+    - Are occlusion, contact, and cast shadows between multiple objects reasonable?
+
+
+    7. AI texture artifacts
+
+    - Brush-stroke patterns, noise, over-smoothing, smearing, etc.
+
+
+    8. Stylistic clues
+
+    - AI-generated images often share characteristic styles or compositions.
+
+    - Decide whether this image matches a typical AI style or filter.
+
+
+    Below is a clear, hierarchical, and logically complete checklist of artifact inspection
+    points.
+
+    You may refer to the following checklist, but it is not limited by it.
+
+
+    1 Geometric and Structural Consistency
+
+    - Perspective & Lighting: Shadow direction conflicts, depth distortion, mirror
+    reflections not matching single light source models
+
+    - Physical Details: Incorrect cloth folding logic, wrong glass refraction angles
+
+    - Biological Structures: Extra/missing fingers, mismatched earrings, incorrect
+    number of animal limbs/claws
+
+    - Text Accuracy: Collapsed or jumbled signboards/road signs, especially in multi-line
+    text
+
+    - Edges & Seams: Edge drifting, excessive hair-background blending, sudden breaks
+    in continuous areas
+
+    - Smudging in Complex Areas: Large area blurring to avoid complex structures (e.g.,
+    crowds, leaves)
+
+
+    2 Semantic and Common Sense Consistency
+
+    - Scene Logic: Rainbow in night sky, stars with direct sunlight
+
+    - Fantasy / Unreal Elements: Magical castles, dogs piloting planes, screens growing
+    out of animals
+
+    - Over-Idealization: Flawless faces, extreme symmetry, overly high saturation
+
+    - Repeated Textures: Looping patterns on floor tiles, lawns
+
+    - Uniform Micro-Expressions: Everyone in group photos showing the same exact expression
+
+    - Abnormal Object Interactions: Violations of physical rules like interpenetration
+
+
+    3 Indoor Scene (Room, etc.) Artifact Check
+
+    - Structural Integrity: Walls, doors, and windows must be naturally connected
+    and closed; no fractures or missing parts
+
+    - Spatial Logic: Avoid floating, clipping (through walls/tables/bathtubs, etc.)
+
+    - Mirror Reflections: Reflected content matches real space with consistent perspective
+
+    - Materials & Textures: No texture stretching, misalignment, or abrupt seams
+
+    - Perspective Consistency: Parallel lines (wall corners, floor tiles) converge
+    to the same vanishing point; avoid dual perspectives
+
+    - Semantic Consistency: Furniture size proportion, walking paths, and functional
+    layout should be reasonable
+
+    - Lighting & Shadows: Light source positions, shadow directions, and intensities
+    must be natural and consistent
+
+
+    4 Human-Related Artifacts
+
+    - Eyes: Size, color, or highlights mismatch between left and right; distorted
+    shapes
+
+    - Teeth: Missing edges, blurry blending, overly smooth
+
+    - Ears / Accessories: Left-right size or position deviations; mismatched earrings;
+    glasses not fitting the face
+
+    - Hair: Texture distortion, missing patches, or floating against gravity
+
+    - Hands / Body: Finger/limb deformities, overly uniform facial features in multiple
+    people
+
+    - Background Characters: Missing facial details, strange expressions; incorrect
+    shapes of held objects (e.g., cameras)
+
+
+    5 Outdoor Scene (Architecture • Landscape, etc.) Artifacts
+
+    - Structural Integrity: Buildings, roads missing or deformed
+
+    - Spatial Logic: Floating, sinking into ground, or "far object blocking near object"
+
+    - Occlusion Relationships: Reversal of depth layers
+
+    - Materials & Textures: Texture stretching, repeating patterns, mosaics, misaligned
+    stitching
+
+    - Perspective Consistency: Single vanishing point; avoid conflicts from distortion
+    or multiple vanishing points
+
+    - Semantic Consistency: Proper scale and realistic combinations (e.g., grass not
+    growing on rooftops)
+
+    - Lighting & Shadows: Unified direction and intensity
+
+
+    6 Target Objects (Animals • Vehicles • Food, etc.) Artifacts
+
+    - Symmetry: Unequal eye sizes, deformed oval tires
+
+    - Edge Transition: Blurry or unclear boundaries blending into background
+
+    - Icons / Text: Blurred or distorted license plates, package labels
+
+    - Structural Logic: Bent shapes, hollow/solid errors
+
+    - Component Integrity: Missing guitar headstock, mouse with fewer claws
+
+    - Shadows & Reflections: Missing shadows despite consistent lighting, or wrong
+    shadow directions
+
+    - Object Interactions: Tire marks not aligning with ground
+
+    - Unreal Objects: Absurd structures like bread used as wheels
+
+    - Background Issues: Oddly shaped doors/windows, perspective errors
+
+    '
+  spai_instructions: "--- SPAI SPECTRAL ANALYSIS CONTEXT ---\nYou will receive:\n\
+    1. **SPAI Spectral Analysis Report** - SPAI's classification, confidence score,\
+    \ and tier assessment\n2. **ORIGINAL IMAGE** - The unmodified image to analyze\n\
+    3. **SPAI ATTENTION HEATMAP OVERLAY** - Visual representation of SPAI's frequency-domain\
+    \ attention\n   - Blended at 60% original + 40% heatmap for interpretation\n \
+    \  - Red regions = Suspicious spectral patterns detected by SPAI's Vision Transformer\n\
+    \   - Blue regions = Normal frequency distributions\n   - SPAI uses masked feature\
+    \ modeling to detect AI-generated frequency signatures\n\nSPAI Classification\
+    \ Tiers:\n- 'Authentic' (score < 0.5) = SPAI's spectral analysis suggests real\
+    \ photograph\n- 'Suspicious' (0.5 ≤ score < 0.9) = SPAI detects some AI-like frequency\
+    \ patterns\n- 'Deepfake' (score ≥ 0.9) = SPAI's spectral analysis strongly indicates\
+    \ AI generation\n\nHow to Use SPAI Context:\n- SPAI analyzes frequency-domain\
+    \ patterns invisible to human vision\n- Red heatmap regions highlight areas with\
+    \ spectral anomalies\n- Use SPAI as ONE data point alongside visual analysis\n\
+    - SPAI can be fooled by heavy post-processing or compression artifacts\n- Trust\
+    \ your visual judgment when SPAI conflicts with obvious authenticity markers\n\
+    - Social media re-compression (WhatsApp/Facebook) may affect SPAI's accuracy\n"
+  metadata_instructions: "3. **Metadata Check**:\n   - Any AI tool signatures detected?\n\
+    \   - Professional camera vs smartphone vs no metadata?\n"
+watermark_instructions:
+  analyze: 'Actively scan for known AI watermarks (e.g., ''Sora'', ''NanoBanana'',
+    colored strips, AI tool logos). If found, flag as ''Suspected AI Watermark''.
+    CAUTION: Distinguish these from standard news/TV watermarks (CNN, BBC, Reuters).
+
+    '
+  ignore: '**DO NOT** analyze, mention, or consider any watermarks, text overlays,
+    corner logos, timestamps, or channel branding in your reasoning. These are OSINT
+    source attributions (news agencies, TV stations) and are **completely irrelevant**
+    to authenticity assessment. Focus ONLY on the visual content itself.
+
+    '
+verdict_prompt: 'Based on your analysis, provide your final verdict:
+
+
+  (A) Real (Authentic Capture)
+
+  (B) Fake (AI Generated/Manipulated)
+
+
+  Answer with ONLY the single letter A or B.
+
+  '

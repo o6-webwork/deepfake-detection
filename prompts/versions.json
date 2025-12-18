@@ -1,0 +1,46 @@
+{
+  "current_version": "1.2.0",
+  "description": "NexInspect OSINT Deepfake Detection Prompts",
+  "versions": {
+    "1.0.0": {
+      "file": "v1.0.0.yaml",
+      "date": "2024-12-18",
+      "author": "Claude Code",
+      "changes": [
+        "Initial versioned release",
+        "Centralized verdict_prompt from detector.py",
+        "Established baseline for prompt version control",
+        "Added metadata section for tracking"
+      ],
+      "active": false
+    },
+    "1.1.0": {
+      "file": "v1.1.0.yaml",
+      "date": "2025-12-19",
+      "author": "User",
+      "changes": [
+        "Separate observation from verdict in system prompts",
+        "Add critical constraint: DO NOT give final verdict, only report observations",
+        "Reframe analyst as junior role reporting to senior analyst",
+        "Update verdict prompt with senior analyst role making judgment call",
+        "Add operational cost emphasis: high cost of missing AI-generated images",
+        "Mitigate timidity bias causing high false negative rate"
+      ],
+      "active": false
+    },
+    "1.2.0": {
+      "file": "v1.2.0.yaml",
+      "date": "2025-12-19",
+      "author": "User",
+      "changes": [
+        "Simplified analysis protocol focused on practical OSINT indicators",
+        "Replace exhaustive checklist with 5-step tactical protocol",
+        "Add structured output format: SCENE, HIGH_RISK_ARTIFACTS, LOGIC_FAILURES, STYLISTIC_FLAGS, SPAI_HOTSPOTS",
+        "Focus on military/propaganda imagery tells: weapon ergonomics, dramatic tropes, waxy skin",
+        "Direct SPAI heatmap inspection protocol (RED/ORANGE regions)",
+        "Remove theoretical framework, keep actionable observations only"
+      ],
+      "active": true
+    }
+  }
+}

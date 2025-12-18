@@ -8,6 +8,16 @@ import pandas as pd
 import os
 import math
 from datetime import datetime
+import plotly.graph_objects as go
+import plotly.express as px
+from plotly.subplots import make_subplots
+import numpy as np
+from reportlab.lib.pagesizes import letter
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle, PageBreak, Image as RLImage
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 
 from shared_functions import (
     analyze_single_image,
@@ -41,6 +51,317 @@ def load_spai_detector():
         weights_path="spai/weights/spai.pth"
     )
 
+# ==================== Analytics Functions ====================
+# These functions support the Analytics tab
+
+def load_evaluation_data_for_analytics(uploaded_file, config_name):
+    """Load metrics from an evaluation Excel file."""
+    try:
+        metrics_df = pd.read_excel(uploaded_file, sheet_name='metrics')
+        if len(metrics_df) == 0:
+            return None
+
+        row = metrics_df.iloc[0]
+        data = {
+            'Configuration': config_name,
+            'Model': row.get('model', 'Unknown'),
+            'Accuracy': row.get('accuracy', 0),
+            'Precision': row.get('precision', 0),
+            'Recall': row.get('recall', 0),
+            'F1 Score': row.get('f1', 0),
+            'TP': int(row.get('tp', 0)),
+            'FP': int(row.get('fp', 0)),
+            'TN': int(row.get('tn', 0)),
+            'FN': int(row.get('fn', 0))
+        }
+
+        try:
+            config_df = pd.read_excel(uploaded_file, sheet_name='config')
+            for idx, config_row in config_df.iterrows():
+                if config_row.get('parameter') == 'detection_mode':
+                    data['Detection Mode'] = config_row.get('value', 'Unknown')
+                    break
+        except:
+            data['Detection Mode'] = 'Unknown'
+
+        return data
+    except Exception as e:
+        st.error(f"Error loading {uploaded_file.name}: {e}")
+        return None
+
+
+def create_metrics_comparison(df):
+    """Create bar chart comparing key metrics with dynamic sizing."""
+    # Calculate dynamic height based on number of configs and label length
+    n_configs = len(df)
+    max_label_length = df['Configuration'].astype(str).str.len().max()
+
+    # Dynamic spacing and sizing
+    base_height = 600
+    label_height_factor = min(max_label_length * 2, 150)  # Cap at 150px
+    dynamic_height = base_height + label_height_factor
+
+    fig = make_subplots(
+        rows=2, cols=2,
+        subplot_titles=('Accuracy', 'Precision', 'Recall', 'F1 Score'),
+        vertical_spacing=0.15,
+        horizontal_spacing=0.12
+    )
+
+    metrics = ['Accuracy', 'Precision', 'Recall', 'F1 Score']
+    colors_list = ['#3498db', '#e74c3c', '#2ecc71', '#f39c12']
+
+    for idx, (metric, color) in enumerate(zip(metrics, colors_list)):
+        row = idx // 2 + 1
+        col = idx % 2 + 1
+
+        fig.add_trace(
+            go.Bar(
+                x=df['Configuration'],
+                y=df[metric] * 100,
+                name=metric,
+                marker_color=color,
+                text=df[metric].apply(lambda x: f'{x:.1%}'),
+                textposition='outside',
+                showlegend=False
+            ),
+            row=row, col=col
+        )
+
+        # Adjust tick angle based on label length
+        tick_angle = -45 if max_label_length > 15 else 0
+
+        fig.update_xaxes(
+            tickangle=tick_angle,
+            tickfont=dict(size=10),
+            row=row, col=col
+        )
+        fig.update_yaxes(title_text="Percentage", range=[0, 105], row=row, col=col)
+
+    # Dynamic bottom margin based on label length
+    bottom_margin = max(80, min(label_height_factor, 180))
+
+    fig.update_layout(
+        height=dynamic_height,
+        title_text="Performance Metrics Comparison",
+        showlegend=False,
+        margin=dict(b=bottom_margin, t=60, l=50, r=50)
+    )
+
+    return fig
+
+
+def create_confusion_matrix_comparison(df):
+    """Create confusion matrix visualization for each configuration."""
+    n_configs = len(df)
+    cols = min(3, n_configs)
+    rows = (n_configs + cols - 1) // cols
+
+    fig = make_subplots(
+        rows=rows, cols=cols,
+        subplot_titles=df['Configuration'].tolist(),
+        specs=[[{'type': 'heatmap'} for _ in range(cols)] for _ in range(rows)],
+        vertical_spacing=0.15,
+        horizontal_spacing=0.1
+    )
+
+    for idx, row_data in df.iterrows():
+        row_pos = idx // cols + 1
+        col_pos = idx % cols + 1
+
+        confusion = np.array([
+            [row_data['TN'], row_data['FP']],
+            [row_data['FN'], row_data['TP']]
+        ])
+
+        annotations = [
+            [f"TN<br>{row_data['TN']}", f"FP<br>{row_data['FP']}"],
+            [f"FN<br>{row_data['FN']}", f"TP<br>{row_data['TP']}"]
+        ]
+
+        fig.add_trace(
+            go.Heatmap(
+                z=confusion,
+                x=['Predicted Real', 'Predicted Fake'],
+                y=['Actual Real', 'Actual Fake'],
+                text=annotations,
+                texttemplate='%{text}',
+                textfont={"size": 12},
+                colorscale='Blues',
+                showscale=(idx == 0),
+                hovertemplate='%{text}<extra></extra>'
+            ),
+            row=row_pos, col=col_pos
+        )
+
+    fig.update_layout(
+        height=300 * rows,
+        title_text="Confusion Matrices"
+    )
+
+    return fig
+
+
+def create_precision_recall_plot(df):
+    """Create precision-recall scatter plot with smart label positioning."""
+    # Calculate dynamic sizing based on number of configs
+    n_configs = len(df)
+    max_label_length = df['Configuration'].astype(str).str.len().max()
+
+    # Increase height if many configs or long labels
+    base_height = 500
+    if n_configs > 5 or max_label_length > 20:
+        base_height = 600
+
+    fig = go.Figure()
+
+    # Use smart text positioning to avoid overlap
+    # For many configs, show labels on hover only
+    if n_configs > 6:
+        mode = 'markers'
+        show_text = False
+    else:
+        mode = 'markers+text'
+        show_text = True
+
+    fig.add_trace(
+        go.Scatter(
+            x=df['Recall'] * 100,
+            y=df['Precision'] * 100,
+            mode=mode,
+            text=df['Configuration'],
+            textposition='top center',
+            textfont=dict(size=10),
+            marker=dict(
+                size=15,
+                color=df['F1 Score'],
+                colorscale='Viridis',
+                showscale=True,
+                colorbar=dict(title="F1 Score"),
+                line=dict(width=2, color='white')
+            ),
+            hovertemplate='<b>%{text}</b><br>Precision: %{y:.1f}%<br>Recall: %{x:.1f}%<extra></extra>'
+        )
+    )
+
+    fig.update_layout(
+        title="Precision-Recall Trade-off",
+        xaxis_title="Recall (%)",
+        yaxis_title="Precision (%)",
+        height=base_height,
+        xaxis=dict(range=[0, 105]),
+        yaxis=dict(range=[0, 105]),
+        margin=dict(t=60, b=60, l=60, r=60)
+    )
+
+    return fig
+
+
+def generate_pdf_report_analytics(df, metrics_comparison_fig, pr_plot_fig, confusion_matrix_fig):
+    """Generate a comprehensive PDF report of the evaluation analytics."""
+    buffer = io.BytesIO()
+    doc = SimpleDocTemplate(buffer, pagesize=letter, topMargin=0.5*inch, bottomMargin=0.5*inch)
+
+    elements = []
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        'CustomTitle',
+        parent=styles['Heading1'],
+        fontSize=24,
+        textColor=colors.HexColor('#2c3e50'),
+        spaceAfter=30,
+        alignment=TA_CENTER
+    )
+
+    heading_style = ParagraphStyle(
+        'CustomHeading',
+        parent=styles['Heading2'],
+        fontSize=16,
+        textColor=colors.HexColor('#34495e'),
+        spaceAfter=12,
+        spaceBefore=12
+    )
+
+    # Title
+    title = Paragraph("NexInspect Evaluation Analytics Report", title_style)
+    elements.append(title)
+
+    timestamp = Paragraph(
+        f"<para align=center>Generated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</para>",
+        styles['Normal']
+    )
+    elements.append(timestamp)
+    elements.append(Spacer(1, 0.3*inch))
+
+    # Summary Metrics Table
+    elements.append(Paragraph("Summary Metrics", heading_style))
+
+    table_data = [['Configuration', 'Accuracy', 'Precision', 'Recall', 'F1 Score']]
+    for _, row in df.iterrows():
+        table_data.append([
+            str(row['Configuration']),
+            f"{row['Accuracy']:.1%}",
+            f"{row['Precision']:.1%}",
+            f"{row['Recall']:.1%}",
+            f"{row['F1 Score']:.1%}"
+        ])
+
+    table = Table(table_data, colWidths=[2.5*inch, 1.2*inch, 1.2*inch, 1.2*inch, 1.2*inch])
+    table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#3498db')),
+        ('TEXTCOLOR', (0, 0), (-1, 0), colors.whitesmoke),
+        ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+        ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+        ('FONTSIZE', (0, 0), (-1, 0), 12),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 12),
+        ('BACKGROUND', (0, 1), (-1, -1), colors.beige),
+        ('GRID', (0, 0), (-1, -1), 1, colors.black),
+        ('FONTNAME', (0, 1), (-1, -1), 'Helvetica'),
+        ('FONTSIZE', (0, 1), (-1, -1), 10),
+        ('ROWBACKGROUNDS', (0, 1), (-1, -1), [colors.white, colors.lightgrey]),
+    ]))
+
+    elements.append(table)
+    elements.append(Spacer(1, 0.3*inch))
+
+    # Best Performers
+    elements.append(Paragraph("Best Performers", heading_style))
+
+    best_acc = df.loc[df['Accuracy'].idxmax()]
+    best_f1 = df.loc[df['F1 Score'].idxmax()]
+
+    best_text = f"""
+    <b>Best Accuracy:</b> {best_acc['Configuration']} ({best_acc['Accuracy']:.1%})<br/>
+    <b>Best F1 Score:</b> {best_f1['Configuration']} ({best_f1['F1 Score']:.1%})
+    """
+
+    elements.append(Paragraph(best_text, styles['Normal']))
+    elements.append(Spacer(1, 0.3*inch))
+
+    # Page break before charts
+    elements.append(PageBreak())
+
+    # Add charts as images
+    elements.append(Paragraph("Performance Visualizations", heading_style))
+    elements.append(Spacer(1, 0.2*inch))
+
+    try:
+        img_bytes = metrics_comparison_fig.to_image(format="png", width=700, height=500)
+        img = RLImage(io.BytesIO(img_bytes), width=6*inch, height=4*inch)
+        elements.append(img)
+        elements.append(Spacer(1, 0.2*inch))
+
+        img_bytes = pr_plot_fig.to_image(format="png", width=700, height=500)
+        img = RLImage(io.BytesIO(img_bytes), width=6*inch, height=4*inch)
+        elements.append(img)
+    except Exception as e:
+        elements.append(Paragraph(f"<i>Note: Chart visualization requires kaleido package. Error: {str(e)}</i>", styles['Italic']))
+
+    doc.build(elements)
+    buffer.seek(0)
+
+    return buffer
+
 # session state
 if "messages" not in st.session_state:
     st.session_state.messages = []
@@ -66,7 +387,7 @@ model_key_to_display = {
 display_to_model_key = {v: k for k, v in model_key_to_display.items()}
 
 # main tabs
-tab1, tab2 = st.tabs(["🔍 Detection", "📊 Evaluation"])
+tab1, tab2, tab3 = st.tabs(["🔍 Detection", "📊 Evaluation", "📈 Analytics"])
 
 # ───────────────────────── Tab 1: Single image ─────────────────────────
 with tab1:
@@ -335,17 +656,28 @@ Enable Debug Mode to see detailed SPAI scores.
                         st.markdown("### OSINT Detection Result")
 
                         tier = result['tier']
-                        p_fake = result['confidence']  # detector.py always returns P(fake)
+                        p_fake = result['confidence']  # detector.py returns P(fake) or "not available"
 
-                        # Visual confidence bar with color coding
-                        if tier == "Deepfake":
-                            st.error(f"🚨 **{tier}** - AI Generated Probability: {p_fake*100:.1f}%")
-                        elif tier == "Suspicious":
-                            st.warning(f"⚠️ **{tier}** - AI Generated Probability: {p_fake*100:.1f}%")
+                        # Handle confidence display
+                        if isinstance(p_fake, str):  # "not available"
+                            confidence_display = "Not available (logprobs not supported)"
+                            # Visual tier indicator without confidence bar
+                            if tier == "Deepfake":
+                                st.error(f"🚨 **{tier}** - AI Generated Probability: {confidence_display}")
+                            elif tier == "Suspicious":
+                                st.warning(f"⚠️ **{tier}** - AI Generated Probability: {confidence_display}")
+                            else:
+                                st.success(f"✅ **{tier}** - AI Generated Probability: {confidence_display}")
                         else:
-                            st.success(f"✅ **{tier}** - AI Generated Probability: {p_fake*100:.1f}%")
+                            # Visual confidence bar with color coding
+                            if tier == "Deepfake":
+                                st.error(f"🚨 **{tier}** - AI Generated Probability: {p_fake*100:.1f}%")
+                            elif tier == "Suspicious":
+                                st.warning(f"⚠️ **{tier}** - AI Generated Probability: {p_fake*100:.1f}%")
+                            else:
+                                st.success(f"✅ **{tier}** - AI Generated Probability: {p_fake*100:.1f}%")
 
-                        st.progress(p_fake, text=f"AI Generated: {p_fake*100:.1f}%")
+                            st.progress(p_fake, text=f"AI Generated: {p_fake*100:.1f}%")
 
                         # Metadata auto-fail indicator
                         if result.get('metadata_auto_fail', False):
@@ -368,19 +700,24 @@ Enable Debug Mode to see detailed SPAI scores.
                 # Extract filename and classification for expander title
                 filename = msg.get("filename", "Unknown")
                 tier = msg.get("tier", "Unknown")
-                p_fake_pct = msg.get("p_fake_pct", 0)
+                p_fake_pct = msg.get("p_fake_pct", None)
 
-                # Determine emoji based on tier
+                # Determine emoji based on standardized three-tier system
                 if tier == "Deepfake":
                     tier_emoji = "🚨"
                 elif tier == "Suspicious":
                     tier_emoji = "⚠️"
-                else:
+                else:  # Authentic
                     tier_emoji = "✅"
 
-                # Create collapsible expander
+                # Create collapsible expander with appropriate title
+                if p_fake_pct is not None:
+                    expander_title = f"{tier_emoji} **{filename}** - {tier} (AI Generated: {p_fake_pct:.1f}%)"
+                else:
+                    expander_title = f"{tier_emoji} **{filename}** - {tier} (Confidence: Not available)"
+
                 with st.expander(
-                    f"{tier_emoji} **{filename}** - {tier} (AI Generated: {p_fake_pct:.1f}%)",
+                    expander_title,
                     expanded=(i == len(st.session_state.messages) - 1)  # Only expand latest result
                 ):
                     st.markdown(msg['content'], unsafe_allow_html=True)
@@ -456,28 +793,41 @@ Enable Debug Mode to see detailed SPAI scores.
 
                 # Create assistant message
                 tier = result['tier']
-                p_fake = result['confidence']  # detector.py always returns P(fake)
-                p_fake_pct = p_fake * 100
+                p_fake = result['confidence']  # detector.py returns P(fake) or "not available"
+
+                # Handle confidence display
+                if isinstance(p_fake, str):  # "not available"
+                    p_fake_pct = None
+                    confidence_display = "Not available (logprobs not supported)"
+                else:
+                    p_fake_pct = p_fake * 100
+                    confidence_display = f"{p_fake_pct:.1f}%"
+
                 reasoning = result['reasoning']
 
-                # Determine color coding
+                # Determine color coding (standardized three-tier system)
                 if tier == "Deepfake":
                     tier_emoji = "🚨"
                 elif tier == "Suspicious":
                     tier_emoji = "⚠️"
-                else:
+                else:  # Authentic
                     tier_emoji = "✅"
 
                 # Format mode description
                 if detection_mode == "spai_standalone":
                     # SPAI standalone mode - show only SPAI results with clear prediction
-                    spai_prediction = "AI-Generated" if p_fake >= 0.5 else "Real"
+                    # Note: SPAI always returns numeric scores, but add safety check
+                    if isinstance(p_fake, (int, float)):
+                        spai_prediction = "AI-Generated" if p_fake >= 0.5 else "Real"
 
-                    # Show probability in clearer format
-                    if spai_prediction == "AI-Generated":
-                        prob_display = f"**AI-Generated Probability:** {p_fake_pct:.1f}%"
+                        # Show probability in clearer format
+                        if spai_prediction == "AI-Generated":
+                            prob_display = f"**AI-Generated Probability:** {p_fake_pct:.1f}%"
+                        else:
+                            prob_display = f"**Real Probability:** {(100 - p_fake_pct):.1f}% (AI: {p_fake_pct:.1f}%)"
                     else:
-                        prob_display = f"**Real Probability:** {(100 - p_fake_pct):.1f}% (AI: {p_fake_pct:.1f}%)"
+                        spai_prediction = "Unknown"
+                        prob_display = f"**Confidence:** {confidence_display}"
 
                     assistant_msg = f"""**Detection Mode:** SPAI Standalone (Spectral Analysis Only)
 
@@ -496,7 +846,7 @@ Enable Debug Mode to see detailed SPAI scores.
 **OSINT Context:** {osint_context.capitalize()}
 
 **{tier_emoji} Classification: {tier}**
-**AI Generated Probability:** {p_fake_pct:.1f}%
+**AI Generated Probability:** {confidence_display}
 
 **VLM Analysis:**
 {reasoning}
@@ -560,18 +910,53 @@ Enable Debug Mode to see detailed SPAI scores.
 
 **Top K=5 Tokens:**
 """
-                        # Format top-k logprobs as table
-                        for i, (token, logprob) in enumerate(debug.get('top_k_logprobs', [])[:5], 1):
-                            prob = math.exp(logprob)
-                            interpretation = ""
-                            if token in detector.REAL_TOKENS:
-                                interpretation = "(REAL)"
-                            elif token in detector.FAKE_TOKENS:
-                                interpretation = "(FAKE)"
+                        # Format top-k logprobs as table (only if available)
+                        if debug.get('top_k_logprobs'):
+                            for i, (token, logprob) in enumerate(debug.get('top_k_logprobs', [])[:5], 1):
+                                prob = math.exp(logprob)
+                                interpretation = ""
+                                if token in detector.REAL_TOKENS:
+                                    interpretation = "(REAL)"
+                                elif token in detector.FAKE_TOKENS:
+                                    interpretation = "(FAKE)"
 
-                            assistant_msg += f"\n{i}. `{repr(token)}`: {logprob:.3f} → {prob:.4f} {interpretation}"
+                                assistant_msg += f"\n{i}. `{repr(token)}`: {logprob:.3f} → {prob:.4f} {interpretation}"
+                        else:
+                            assistant_msg += "\n*No logprobs available (not supported by this VLM provider)*"
 
-                        assistant_msg += f"""
+                        # Show probabilities only if confidence is a number
+                        if isinstance(p_fake, str):
+                            assistant_msg += f"""
+
+**Classification Result:**
+- Verdict: {result.get('verdict_token', 'N/A')}
+- Confidence: {confidence_display}
+- Tier: **{tier}**
+
+*Note: This VLM provider does not support logprobs. Classification is based on text-based A/B extraction.*
+
+---
+### ⚙️ System Prompt
+
+```
+{debug.get('system_prompt', 'N/A (standalone mode)')}
+```
+
+---
+### ⏱️ Performance Metrics
+
+**Stage-by-Stage Timing:**
+- Stage 0 (Metadata): {debug.get('stage_0_time', 0):.3f}s
+- Stage 1 (Forensics): {debug.get('stage_1_time', 0):.3f}s
+- Stage 2 (VLM Analysis): {debug['request_1_latency']:.2f}s
+- Stage 3 (Verdict): {debug['request_2_latency']:.2f}s
+
+**Total Pipeline:** {debug['total_pipeline_time']:.2f}s
+
+**KV-Cache Hit:** {'✅ YES' if debug.get('kv_cache_hit', False) else '❌ NO'}
+"""
+                        else:
+                            assistant_msg += f"""
 
 **Softmax Normalized Probabilities:**
 - AI Generated: {p_fake:.4f} ({p_fake_pct:.1f}%)
@@ -900,3 +1285,153 @@ with tab2:
 
         except Exception as e:
             st.error(f"Evaluation failed: {e}")
+
+# ───────────────────────── Tab 3: Analytics ─────────────────────────
+with tab3:
+    st.header("📈 Evaluation Analytics")
+    st.markdown("Compare and analyze evaluation results with interactive visualizations and PDF export")
+
+    # File uploader for evaluation results
+    st.subheader("📁 Upload Evaluation Files")
+    uploaded_analytics_files = st.file_uploader(
+        "Select Excel evaluation files",
+        type=['xlsx'],
+        accept_multiple_files=True,
+        help="Upload multiple evaluation result files for comparison",
+        key="analytics_uploader"
+    )
+
+    if uploaded_analytics_files:
+        # Configuration name input
+        st.subheader("⚙️ Configuration Names")
+        st.markdown("Assign names to each configuration:")
+
+        config_names = {}
+        cols = st.columns(min(3, len(uploaded_analytics_files)))
+        for i, file in enumerate(uploaded_analytics_files):
+            default_name = file.name.replace('evaluation_', '').replace('.xlsx', '')
+            with cols[i % 3]:
+                config_names[file.name] = st.text_input(
+                    f"Config {i+1}:",
+                    value=default_name,
+                    key=f"analytics_name_{i}"
+                )
+
+        # Load all data
+        all_data = []
+        for file in uploaded_analytics_files:
+            config_name = config_names.get(file.name, file.name)
+            data = load_evaluation_data_for_analytics(file, config_name)
+            if data:
+                all_data.append(data)
+
+        if all_data:
+            df = pd.DataFrame(all_data)
+
+            # Metrics table
+            st.subheader("📋 Summary Metrics")
+            display_df = df[['Configuration', 'Accuracy', 'Precision', 'Recall', 'F1 Score']].copy()
+            display_df['Accuracy'] = display_df['Accuracy'].apply(lambda x: f'{x:.1%}')
+            display_df['Precision'] = display_df['Precision'].apply(lambda x: f'{x:.1%}')
+            display_df['Recall'] = display_df['Recall'].apply(lambda x: f'{x:.1%}')
+            display_df['F1 Score'] = display_df['F1 Score'].apply(lambda x: f'{x:.1%}')
+
+            st.dataframe(display_df, use_container_width=True, hide_index=True)
+
+            # Download buttons
+            col_csv, col_pdf = st.columns(2)
+
+            with col_csv:
+                csv_buffer = io.StringIO()
+                df.to_csv(csv_buffer, index=False)
+                st.download_button(
+                    label="📥 Download Comparison as CSV",
+                    data=csv_buffer.getvalue(),
+                    file_name="evaluation_comparison.csv",
+                    mime="text/csv"
+                )
+
+            # Visualizations
+            st.subheader("📊 Performance Visualizations")
+
+            # Metrics comparison
+            metrics_fig = create_metrics_comparison(df)
+            st.plotly_chart(metrics_fig, use_container_width=True)
+
+            # Precision-Recall plot
+            pr_fig = create_precision_recall_plot(df)
+            st.plotly_chart(pr_fig, use_container_width=True)
+
+            # Confusion matrices
+            cm_fig = create_confusion_matrix_comparison(df)
+            st.plotly_chart(cm_fig, use_container_width=True)
+
+            # PDF Download button
+            with col_pdf:
+                try:
+                    pdf_buffer = generate_pdf_report_analytics(df, metrics_fig, pr_fig, cm_fig)
+                    st.download_button(
+                        label="📄 Download Report as PDF",
+                        data=pdf_buffer,
+                        file_name=f"evaluation_report_{datetime.now().strftime('%Y%m%d_%H%M%S')}.pdf",
+                        mime="application/pdf"
+                    )
+                except Exception as e:
+                    st.error(f"PDF generation failed: {str(e)}")
+                    st.info("💡 Tip: Install kaleido for chart export: `pip install kaleido`")
+
+            # Best Performers
+            st.subheader("🏆 Best Performers")
+            best_acc = df.loc[df['Accuracy'].idxmax()]
+            best_f1 = df.loc[df['F1 Score'].idxmax()]
+            best_precision = df.loc[df['Precision'].idxmax()]
+            best_recall = df.loc[df['Recall'].idxmax()]
+
+            col1, col2 = st.columns(2)
+            with col1:
+                st.metric("Best Accuracy", f"{best_acc['Accuracy']:.1%}", best_acc['Configuration'])
+                st.metric("Best Precision", f"{best_precision['Precision']:.1%}", best_precision['Configuration'])
+            with col2:
+                st.metric("Best F1 Score", f"{best_f1['F1 Score']:.1%}", best_f1['Configuration'])
+                st.metric("Best Recall", f"{best_recall['Recall']:.1%}", best_recall['Configuration'])
+
+            # Dataset Composition
+            st.subheader("🎯 Dataset Composition")
+            total_samples = df.iloc[0]['TP'] + df.iloc[0]['FP'] + df.iloc[0]['TN'] + df.iloc[0]['FN']
+            total_fakes = df.iloc[0]['TP'] + df.iloc[0]['FN']
+            total_reals = df.iloc[0]['TN'] + df.iloc[0]['FP']
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("Total Samples", total_samples)
+            with col2:
+                st.metric("Fake Images", f"{total_fakes} ({total_fakes/total_samples:.1%})")
+            with col3:
+                st.metric("Real Images", f"{total_reals} ({total_reals/total_samples:.1%})")
+
+        else:
+            st.warning("Could not load data from uploaded files. Please check file format.")
+    else:
+        st.info("👈 Upload evaluation files to begin analysis")
+
+        st.markdown("""
+        ### How to use this Analytics tab:
+
+        1. **Run Evaluations:** First, use the **Evaluation** tab to run batch evaluations
+        2. **Download Results:** Download the Excel files from completed evaluations
+        3. **Upload Here:** Upload one or more Excel files using the uploader above
+        4. **Compare:** View interactive charts and metrics comparisons
+        5. **Export:** Download comparison data as CSV or comprehensive PDF report
+
+        ### Supported Metrics:
+        - Accuracy, Precision, Recall, F1 Score
+        - Confusion Matrix (TP, FP, TN, FN)
+        - Performance comparison charts
+        - Precision-recall trade-off analysis
+
+        ### Features:
+        - 📊 Interactive Plotly visualizations
+        - 📄 Professional PDF report generation
+        - 📥 CSV export for further analysis
+        - 🏆 Best performer identification
+        """)
