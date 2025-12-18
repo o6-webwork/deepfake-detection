@@ -55,9 +55,12 @@ class OSINTDetector:
     ]
 
     @classmethod
-    def _load_prompts(cls, prompts_path: str = "prompts.yaml") -> dict:
+    def _load_prompts(cls, prompts_path: str = "prompts/current.yaml") -> dict:
         """
         Load prompt templates from YAML configuration file.
+
+        Now uses file-per-version system: loads from prompts/current.yaml
+        which points to the active version file.
 
         Returns:
             dict: Prompts dictionary with metadata section for version tracking
@@ -85,7 +88,7 @@ class OSINTDetector:
         context: str = "auto",
         watermark_mode: str = "ignore",
         provider: str = "vllm",
-        prompts_path: str = "prompts.yaml",
+        prompts_path: str = "prompts/current.yaml",
         detection_mode: str = "spai_assisted",
         spai_detector: Optional['SPAIDetector'] = None,
         spai_config_path: str = "spai/configs/spai.yaml",
