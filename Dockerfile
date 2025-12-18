@@ -9,7 +9,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 # Set working directory
 WORKDIR /app
 
-# Install system dependencies for OpenCV, git (for CLIP), and curl for health checks
+# Install system dependencies for OpenCV, git (for CLIP), curl for health checks, and Chromium for PDF charts
 RUN apt-get update && apt-get install -y --no-install-recommends \
     git \
     curl \
@@ -20,8 +20,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libgomp1 \
     libgl1 \
     libgthread-2.0-0 \
+    chromium \
+    chromium-driver \
     && apt-get clean \
     && rm -rf /var/lib/apt/lists/*
+
+# Set Chrome path for kaleido
+ENV CHROME_BIN=/usr/bin/chromium \
+    CHROMIUM_PATH=/usr/bin/chromium
 
 # Copy requirements first for better caching
 COPY requirements.txt .
