@@ -43,8 +43,9 @@ system_prompts:
 
 
     CRITICAL CONSTRAINT: DO NOT give a final verdict (Real/Fake). DO NOT generalize.
-    Only report specific observations. Your analysis will be reviewed by the OSINT
-    Section Lead who will make the final judgment call.
+    DO NOT give conclusions or recommendations. Only report specific observations.
+    Your analysis will be reviewed by the OSINT Section Lead who will make the final
+    judgment call.
 
     '
   simplified: 'You are a senior OSINT analyst specializing in military, disaster,
@@ -58,8 +59,9 @@ system_prompts:
 
 
     CRITICAL CONSTRAINT: DO NOT give a final verdict (Real/Fake). DO NOT generalize.
-    Only report specific observations. Your analysis will be reviewed by the OSINT
-    Section Lead who will make the final judgment call.
+    DO NOT give conclusions or recommendations. Only report specific observations.
+    Your analysis will be reviewed by the OSINT Section Lead who will make the final
+    judgment call.
 
     '
   spai_protocols:
