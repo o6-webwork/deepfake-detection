@@ -3,23 +3,16 @@ metadata:
   last_updated: '2025-12-19'
   description: NexInspect OSINT Deepfake Detection Prompts
   changelog:
-  - version: 1.1.0
+  - version: 1.2.0
     date: '2025-12-19'
     changes:
-    - --changes
-    - Separate observation from verdict in system prompts
-    - --changes
-    - 'Add critical constraint: DO NOT give final verdict, only report observations'
-    - --changes
-    - Reframe analyst as junior role reporting to senior
-    - --changes
-    - Update verdict prompt with senior analyst role making judgment call
-    - --changes
-    - 'Add operational cost emphasis: high cost of missing AI-generated images'
-    - --changes
-    - Mitigate timidity bias causing high false negative rate
-    - --author
-    - User
+    - Simplified analysis protocol focused on practical OSINT indicators
+    - Replace exhaustive 9-subsection checklist with 5-step tactical protocol
+    - 'Add structured field-based output: SCENE, HIGH_RISK_ARTIFACTS, LOGIC_FAILURES, STYLISTIC_FLAGS, SPAI_HOTSPOTS, METADATA, WATERMARKS'
+    - 'Focus on military/propaganda imagery tells: weapon ergonomics, dramatic tropes, waxy skin'
+    - Direct SPAI heatmap inspection protocol (RED/ORANGE regions)
+    - Remove theoretical framework, keep actionable observations only
+    - 'Performance: 79.2% accuracy, 83.3% recall, F1 0.842 (best configuration)'
     author: User
   - version: 1.0.0
     date: '2024-12-18'
